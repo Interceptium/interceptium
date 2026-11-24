@@ -12,16 +12,16 @@ from pathlib import Path
 from tkinter import filedialog
 from typing import Callable
 
-from . import APP_NAME, __version__, roblox
+from . import APP_NAME, __version__, installation, roblox
 from .app import Controller
 from .logbus import log
 from .rules import MODE_LABELS, describe, iter_rules, parse_target_text, rule_mode
-from .ui import anim, fonts, gfx
+from .ui import anim, boot, gfx
 from .ui.overlay import OverlayHost, Popup
 from .ui import theme as T
 from .ui.widgets import (
-    Button, Card, Field, Host, IconButton, IconButtonC, PowerButton, ScrollArea, Segmented, StatusPill, Toggle,
-    ToggleC, install_wheel,
+    Button, Card, Field, Host, IconButton, IconButtonC, PowerButton, ScrollArea, Segmented, Stage, StatusPill,
+    Toggle, ToggleC, install_wheel,
 )
 
 MAX_CARDS = 200
@@ -296,32 +296,112 @@ class RulePage(Page):
         self.on_save(rule)
 
 
-class SettingsPage(Page):
+class SettingsView(tk.Frame):
+    """Full-page settings that slides over the main view, with animated tabs."""
+
+    TABS = [("general", "General"), ("roblox", "Roblox"), ("install", "Installation")]
+
     def __init__(self, win: "MainWindow") -> None:
-        super().__init__(win, "Settings")
-        ctl = win.ctl
-        self.ctl = ctl
-        s = ctl.config.settings
-        self._row("Clear cache on launch", Toggle, s.clear_cache_on_launch, self._set_clear, first=True)
-        self._row("Reroute website launches", Toggle, s.auto_capture_launches, self._set_capture)
-        port_body = self._row("Port", None, None, None)
-        self.port = Field(port_body, str(s.port), width=96, height=34)
+        super().__init__(win.stage, bg=T.BG, padx=T.S(20), pady=T.S(16))
+        self.win = win
+        self.ctl = win.ctl
+        self._stage_dispose = True
+        head = tk.Frame(self, bg=T.BG)
+        head.pack(fill="x")
+        IconButton(head, "back", win.close_settings, kind="ghost", size=38, icon_size=18).pack(side="left")
+        label(head, "Settings", 18, "bold").pack(side="left", padx=T.S(14))
+        self.tabs = Segmented(self, self.TABS, "general", self.show_tab, width=420, height=40)
+        self.tabs.pack(anchor="w", pady=(T.S(18), T.S(14)))
+        self.tab_stage = Stage(self, T.BG, duration=0.3)
+        self.tab_stage.pack(fill="both", expand=True)
+        self.current_tab = "general"
+        self.tab_stage.show(self._build("general"), animate=False)
+
+    # -- tabs ------------------------------------------------------------------
+    def show_tab(self, key: str) -> None:
+        if key == self.current_tab:
+            return
+        order = [k for k, _l in self.TABS]
+        direction = 1 if order.index(key) > order.index(self.current_tab) else -1
+        self.current_tab = key
+        self.tab_stage.show(self._build(key), direction=direction)
+
+    def _build(self, key: str) -> tk.Frame:
+        page = tk.Frame(self.tab_stage, bg=T.BG)
+        page._stage_dispose = True  # type: ignore[attr-defined]
+        column = Card(page, fill=T.SURFACE, radius=22, pad=22)
+        column.pack(fill="both", expand=True)
+        body = column.body
+        getattr(self, f"_tab_{key}")(body)
+        return page
+
+    def _row(self, parent: tk.Misc, title: str, first: bool = False) -> tk.Frame:
+        card = Card(parent, fill=T.CARD, radius=14, pad=14)
+        card.pack(fill="x", pady=(0 if first else T.S(8), 0))
+        label(card.body, title, 10, "bold").pack(side="left")
+        return card.body
+
+    def _tab_general(self, body: tk.Frame) -> None:
+        s = self.ctl.config.settings
+        Toggle(self._row(body, "Clear cache on launch", first=True), s.clear_cache_on_launch,
+               self._set_clear).pack(side="right")
+        Toggle(self._row(body, "Reroute website launches"), s.auto_capture_launches,
+               self._set_capture).pack(side="right")
+        self.port = Field(self._row(body, "Port"), str(s.port), width=96, height=34)
         self.port.pack(side="right")
         self.port.var.trace_add("write", lambda *_: self._set_port())
 
-        row = tk.Frame(self.body, bg=T.SURFACE)
-        row.pack(fill="x", pady=(T.S(18), 0))
-        Button(row, "Open data folder", lambda: open_path(ctl.config.root), kind="ghost").pack(side="left")
-        Button(row, "Remove from Roblox", self._uninstall, kind="danger").pack(side="left", padx=T.S(8))
-        label(self.body, f"Version {__version__}", 9, color=T.FAINT).pack(anchor="w", pady=(T.S(22), 0))
+    def _tab_roblox(self, body: tk.Frame) -> None:
+        Button(self._row(body, "Roblox cache", first=True), "Clear cache", lambda: self.win.clear_cache(),
+               kind="ghost", height=34, size=9).pack(side="right")
+        Button(self._row(body, "Configs and settings"), "Open folder",
+               lambda: open_path(self.ctl.config.root), kind="ghost", icon="folder", height=34, size=9).pack(
+            side="right")
+        Button(self._row(body, "Certificate in Roblox"), "Remove", self._remove_from_roblox, kind="danger",
+               height=34, size=9).pack(side="right")
 
-    def _row(self, title: str, widget, value, command, first: bool = False) -> tk.Frame:
-        card = Card(self.body, fill=T.CARD, radius=14, pad=14)
-        card.pack(fill="x", pady=(0 if first else T.S(8), 0))
-        label(card.body, title, 10, "bold").pack(side="left")
-        if widget is not None:
-            widget(card.body, value, command).pack(side="right")
-        return card.body
+    def _tab_install(self, body: tk.Frame) -> None:
+        setup = installation.find_setup()
+        location = installation.install_location()
+        version = self._row(body, "Version", first=True)
+        label(version, __version__, 10, color=T.MUTED).pack(side="right")
+        where = self._row(body, "Location")
+        text = str(location) if (setup and location) else "Not installed with Interceptium Setup"
+        label(where, T.elide(text, T.font(10), T.S(420)), 10, color=T.MUTED).pack(side="right")
+        actions = tk.Frame(body, bg=T.SURFACE)
+        actions.pack(fill="x", pady=(T.S(18), 0))
+        buttons = [
+            Button(actions, "Repair", lambda: self._maintenance("repair"), kind="ghost", icon="wrench"),
+            Button(actions, "Reinstall", lambda: self._maintenance("reinstall"), kind="ghost", icon="refresh"),
+            Button(actions, "Uninstall", lambda: self._maintenance("uninstall"), kind="danger", icon="trash"),
+        ]
+        for i, b in enumerate(buttons):
+            b.pack(side="left", padx=(0 if i == 0 else T.S(8), 0))
+            b.set_enabled(setup is not None)
+        self.setup_exe = setup
+
+    # -- actions ---------------------------------------------------------------
+    def _maintenance(self, action: str) -> None:
+        titles = {"repair": "Repair Interceptium", "reinstall": "Reinstall Interceptium",
+                  "uninstall": "Uninstall Interceptium"}
+        messages = {"repair": "Interceptium will close and its files will be restored.",
+                    "reinstall": "Interceptium will close, be removed and installed again. Configs are kept.",
+                    "uninstall": "Interceptium will close and open its uninstaller."}
+
+        def go() -> None:
+            if installation.launch_setup(action, self.setup_exe):
+                self.win.on_close()
+            else:
+                log.emit("Error", "Interceptium Setup was not found")
+
+        self.win.push_page(ConfirmPage(self.win, titles[action], messages[action], go,
+                                       ok=action.capitalize()))
+
+    def _remove_from_roblox(self) -> None:
+        self.win.push_page(ConfirmPage(
+            self.win, "Remove from Roblox",
+            "The Interceptium certificate and setting will be removed from all Roblox installs.",
+            lambda: threading.Thread(target=self.ctl.remove_from_roblox, daemon=True).start(), ok="Remove"))
 
     def _set_clear(self, v: bool) -> None:
         self.ctl.config.settings.clear_cache_on_launch = v
@@ -341,12 +421,6 @@ class SettingsPage(Page):
         if text.isdigit() and 1024 <= int(text) <= 65535:
             self.ctl.config.settings.port = int(text)
             self.ctl.config.save()
-
-    def _uninstall(self) -> None:
-        self.win.push_page(ConfirmPage(
-            self.win, "Remove from Roblox",
-            "The Interceptium certificate and setting will be removed from all Roblox installs.",
-            lambda: threading.Thread(target=self.ctl.remove_from_roblox, daemon=True).start(), ok="Remove"))
 
 
 # ------------------------------------------------------------ list items --
@@ -594,9 +668,12 @@ class MainWindow:
         self._set_icons()
         install_wheel(root)
 
-        shell = tk.Frame(root, bg=T.BG, padx=T.S(20), pady=T.S(16))
-        shell.pack(fill="both", expand=True)
+        self.stage = Stage(root, T.BG)
+        self.stage.pack(fill="both", expand=True)
+        shell = tk.Frame(self.stage, bg=T.BG, padx=T.S(20), pady=T.S(16))
+        self.stage.show(shell, animate=False)
         self.shell = shell
+        self.settings: SettingsView | None = None
         self.overlay = OverlayHost(root)
         shell.columnconfigure(1, weight=1)
         shell.rowconfigure(1, weight=1)
@@ -789,10 +866,19 @@ class MainWindow:
         self._bg(roblox.clear_cache)
 
     def open_settings(self) -> None:
-        page = SettingsPage(self)
-        page.bind("<Destroy>", lambda e: e.widget is page and self.address.configure(
-            text=self.ctl.proxy_url.removeprefix("http://")), add="+")
-        self.push_page(page)
+        if self.settings is not None or self.stage.sliding:
+            return
+        self.settings = SettingsView(self)
+        self.stage.show(self.settings, direction=1)
+        self._esc = self.root.bind("<Escape>", lambda _e: not self.pages and self.close_settings(), add="+")
+
+    def close_settings(self) -> None:
+        if self.settings is None:
+            return
+        self.settings = None
+        self.root.unbind("<Escape>")
+        self.stage.show(self.shell, direction=-1)
+        self.address.configure(text=self.ctl.proxy_url.removeprefix("http://"))
 
     # -- configs -----------------------------------------------------------
     def refresh_configs(self) -> None:
@@ -1068,24 +1154,8 @@ class MainWindow:
         self.root.destroy()
 
 
-def _enable_dpi_awareness() -> None:
-    if sys.platform == "win32":
-        try:
-            import ctypes
-            ctypes.windll.shcore.SetProcessDpiAwareness(1)  # crisp rendering on high-DPI screens
-        except (AttributeError, OSError):
-            pass
-
-
 def create_root() -> tk.Tk:
-    _enable_dpi_awareness()
-    fonts.register(asset_path("fonts"))
-    root = tk.Tk()
-    root.withdraw()
-    gfx.reset()
-    T.setup(root)
-    anim.setup(root)
-    return root
+    return boot.create_root(asset_path("fonts"))
 
 
 def run() -> int:

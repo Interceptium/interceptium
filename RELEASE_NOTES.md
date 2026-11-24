@@ -14,11 +14,18 @@ First release of **Interceptium**, a local, loopback-only proxy that swaps Roblo
 - Its local certificate authority is name-constrained to `roblox.com` / `rbxcdn.com`, and it is never added to the system trust store.
 - One third-party dependency: `cryptography` (PyCA).
 
+### Windows installer
+- Own installer: per-user, no admin prompt, Start menu and Desktop shortcuts
+- Listed in Windows Settings > Apps and Control Panel, with Uninstall and Modify
+- Repair, Reinstall and Uninstall, also from Interceptium's Settings > Installation
+
 ### Downloads
-| File | Platform |
+| File | |
 |---|---|
-| `Interceptium-windows-x64.exe` | Windows 10/11 |
-| `Interceptium-macos.zip` | macOS (unsigned: right-click → Open the first time) |
-| `Interceptium-linux-x64` | Linux (runs the proxy only) |
+| `Interceptium-Setup-1.0.0.exe` | Windows installer |
+| `Interceptium-1.0.0-source-windows.zip` | Source + Windows build script + installer source |
+| `Interceptium-1.0.0-source-linux.zip` | Source + Linux build script |
+| `Interceptium-1.0.0-source-macos.zip` | Source + macOS build script |
+| `Interceptium-Setup-1.0.0-source.zip` | Installer source |
 
 Check your download against `SHA256SUMS.txt`.

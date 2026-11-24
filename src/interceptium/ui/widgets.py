@@ -720,3 +720,124 @@ def install_wheel(root: tk.Misc) -> None:
     root.bind_all("<MouseWheel>", wheel, add="+")
     root.bind_all("<Button-4>", lambda e: button(e, -1), add="+")
     root.bind_all("<Button-5>", lambda e: button(e, 1), add="+")
+
+
+# ------------------------------------------------------------ progress bar --
+class ProgressBar(Host):
+    """Rounded bar; the fill eases toward new values and a soft light sweeps across while busy."""
+
+    def __init__(self, parent: tk.Misc, width: int = 420, height: int = 8) -> None:
+        self.w, self.h = T.S(width), T.S(height)
+        super().__init__(parent, self.w, self.h)
+        self.value = 0.0
+        self.shown = 0.0
+        self.busy = False
+        self._track = self.create_image(0, 0, anchor="nw")
+        self._fill = self.create_image(0, 0, anchor="nw")
+        self._shine = self.create_image(0, 0, anchor="nw")
+        self.bind("<Configure>", self._resize)
+        self._draw(0.0)
+
+    def _resize(self, e: tk.Event) -> None:
+        if e.width != self.w:
+            self.w = e.width
+            self._draw(0.0)
+
+    def _draw(self, now: float) -> None:
+        h = self.h
+        self.itemconfigure(self._track, image=gfx.image(gfx.rrect(self.w, h, h / 2), T.TRACK_OFF))
+        fw = int(round(self.w * max(0.0, min(1.0, self.shown))))
+        if fw < h:
+            self.itemconfigure(self._fill, state="hidden")
+            self.itemconfigure(self._shine, state="hidden")
+            return
+        self.itemconfigure(self._fill, image=gfx.image(gfx.rrect(fw, h, h / 2), T.ACCENT), state="normal")
+        if self.busy:
+            sw = min(fw, T.S(90))
+            x = ((now * 0.9) % 1.4 - 0.2) * fw
+            x = max(0, min(fw - sw, x))
+            self.itemconfigure(self._shine, image=gfx.image(gfx.glow(sw, 0, sw / 2), "#ffffff", 0.35),
+                               state="normal")
+            self.coords(self._shine, round(x), round(h / 2 - sw / 2))
+        else:
+            self.itemconfigure(self._shine, state="hidden")
+
+    def set(self, value: float) -> None:
+        self.value = max(0.0, min(1.0, value))
+        start, target = self.shown, self.value
+
+        def step(v: float) -> None:
+            self.shown = start + (target - start) * v
+
+        anim.get().tween((self, "v"), 0.35, step)
+        if not anim.get().active((self, "loop")):
+            anim.get().loop((self, "loop"), self._tick)
+
+    def _tick(self, now: float) -> None:
+        self._draw(now)
+        if not self.busy and not anim.get().active((self, "v")):
+            anim.get().stop((self, "loop"))
+            self._draw(now)
+
+    def set_busy(self, busy: bool) -> None:
+        self.busy = busy
+        if busy and not anim.get().active((self, "loop")):
+            anim.get().loop((self, "loop"), self._tick)
+
+
+# ------------------------------------------------------------------ stage --
+class Stage(tk.Frame):
+    """Holds one view at a time and slides between views (with a parallax push)."""
+
+    def __init__(self, parent: tk.Misc, bg: str, duration: float = 0.34) -> None:
+        super().__init__(parent, bg=bg)
+        self.current: tk.Widget | None = None
+        self.duration = duration
+        self.sliding = False
+
+    def show(self, view: tk.Widget, direction: int = 1, animate: bool = True,
+             done: Callable[[], None] | None = None) -> None:
+        """direction 1 = new view comes from the right, -1 = from the left."""
+        leaving = getattr(self, "_leaving", None)
+        if leaving is not None:  # a previous slide is still running: finish it at once
+            anim.get().stop((self, "slide"))
+            self._dispose(leaving)
+            self._leaving = None
+            if self.current is not None:
+                self.current.place_configure(x=0)
+        old = self.current
+        self.current = view
+        if old is None or not animate:
+            if old is not None:
+                self._dispose(old)
+            view.place(x=0, y=0, relwidth=1, relheight=1)
+            if done:
+                done()
+            return
+        self.sliding = True
+        self._leaving = old
+        width = max(1, self.winfo_width())
+        view.place(x=direction * width, y=0, relwidth=1, relheight=1)
+        view.lift()
+
+        def step(v: float) -> None:
+            view.place_configure(x=int(direction * width * (1 - v)))
+            old.place_configure(x=int(-direction * width * 0.3 * v))
+
+        def finish() -> None:
+            self.sliding = False
+            self._leaving = None
+            self._dispose(old)
+            if done:
+                done()
+
+        anim.get().tween((self, "slide"), self.duration, step, ease=anim.ease_in_out, done=finish)
+
+    @staticmethod
+    def _dispose(view: tk.Widget) -> None:
+        try:
+            view.place_forget()
+            if getattr(view, "_stage_dispose", False):
+                view.destroy()
+        except tk.TclError:
+            pass

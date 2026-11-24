@@ -1,48 +1,41 @@
 name: Build and release
 
-# Tests and builds run on every push. A tag push like v1.0.0, or a manual run
-# with a version, also publishes the Windows, macOS and Linux builds as a Release.
+# Every push: tests on Windows, macOS and Linux, the Windows installer is built
+# and checked with a real install + uninstall, and the source archives are made.
+# A manual run (Actions > Build and release > Run workflow) also replaces the
+# GitHub release for the given version (default v1.0.0) with fresh files.
 on:
   push:
     branches: ["**"]
-    tags: ["v*"]
   workflow_dispatch:
     inputs:
       version:
-        description: "Release version to publish, e.g. v1.0.0 (leave empty to only build)"
+        description: "Release to (re)publish; an existing release with this tag is deleted first"
         required: false
-        default: ""
+        default: "v1.0.0"
 
 permissions:
   contents: read
 
 jobs:
-  build:
+  test:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - os: windows-latest
-            asset: Interceptium-windows-x64.exe
-          - os: macos-latest
-            asset: Interceptium-macos.zip
-          - os: ubuntu-latest
-            asset: Interceptium-linux-x64
+        os: [windows-latest, macos-latest, ubuntu-latest]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-python@v5
         with:
           python-version: "3.14"
-
       - name: Install pinned dependencies
         run: python -m pip install -r requirements-build.txt
-
-      - name: Run tests
+      - name: App tests
         run: python -m unittest discover -s tests -v
-
-      - name: Run GUI tests (virtual display)
+      - name: Setup tests
+        run: python -m unittest discover -s setup/tests -v
+      - name: GUI tests (virtual display)
         if: runner.os == 'Linux'
         env:
           INTERCEPTIUM_GUI_TESTS: "1"
@@ -50,54 +43,101 @@ jobs:
           sudo apt-get update -q && sudo apt-get install -y -q xvfb
           xvfb-run -a -s "-screen 0 1400x900x24" python -m unittest tests.test_gui -v
 
-      - name: Build executable
+  windows-setup:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+      - name: Install pinned dependencies
+        run: python -m pip install -r requirements-build.txt
+      - name: Build Interceptium.exe
         run: python tools/build.py
-
-      - name: Package (Windows)
-        if: runner.os == 'Windows'
+      - name: Build the installer
+        run: python setup/build_setup.py
+      - name: Install, check, uninstall (the way Windows Settings does)
         shell: pwsh
-        run: Move-Item dist/Interceptium.exe "dist/${{ matrix.asset }}"
-
-      - name: Package (macOS)
-        if: runner.os == 'macOS'
-        run: ditto -c -k --keepParent dist/Interceptium.app "dist/${{ matrix.asset }}"
-
-      - name: Package (Linux)
-        if: runner.os == 'Linux'
-        run: mv dist/Interceptium "dist/${{ matrix.asset }}"
-
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $setup = (Get-ChildItem dist\Interceptium-Setup-*.exe | Select-Object -First 1).FullName
+          $dir = Join-Path $env:RUNNER_TEMP 'Interceptium'
+          $p = Start-Process $setup -ArgumentList @('--quiet', '--dir', $dir) -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "install exited with $($p.ExitCode)" }
+          foreach ($f in 'Interceptium.exe', 'Interceptium Setup.exe', 'install.json') {
+            if (-not (Test-Path (Join-Path $dir $f))) { throw "missing $f" }
+          }
+          $key = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Interceptium'
+          $entry = Get-ItemProperty $key
+          if ($entry.InstallLocation -ne $dir) { throw "wrong InstallLocation: $($entry.InstallLocation)" }
+          if ($entry.DisplayName -ne 'Interceptium') { throw 'wrong DisplayName' }
+          $lnk = Join-Path ([Environment]::GetFolderPath('Programs')) 'Interceptium.lnk'
+          if (-not (Test-Path $lnk)) { throw 'Start menu shortcut missing' }
+          $p = Start-Process (Join-Path $dir 'Interceptium.exe') -ArgumentList '--version' -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "app exited with $($p.ExitCode)" }
+          # repair: delete the app, run the maintenance copy with --repair, the app must come back
+          Remove-Item (Join-Path $dir 'Interceptium.exe')
+          Start-Process (Join-Path $dir 'Interceptium Setup.exe') -ArgumentList @('--repair', '--quiet')
+          $deadline = (Get-Date).AddSeconds(120)
+          while (-not (Test-Path (Join-Path $dir 'Interceptium.exe'))) {
+            if ((Get-Date) -gt $deadline) { throw 'repair did not restore the app' }
+            Start-Sleep -Seconds 2
+          }
+          Start-Sleep -Seconds 8
+          # uninstall exactly like Settings > Apps > Uninstall (quiet variant)
+          cmd /c $entry.QuietUninstallString
+          $deadline = (Get-Date).AddSeconds(120)
+          while ((Test-Path $dir) -or (Test-Path $key) -or (Test-Path $lnk)) {
+            if ((Get-Date) -gt $deadline) { throw 'uninstall did not finish' }
+            Start-Sleep -Seconds 2
+          }
+          Write-Host 'Install, repair and uninstall all worked.'
       - uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.asset }}
-          path: dist/${{ matrix.asset }}
+          name: windows-setup
+          path: dist/Interceptium-Setup-*.exe
+          if-no-files-found: error
+
+  sources:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+      - name: Make source archives
+        run: python tools/package_sources.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sources
+          path: dist/release/*.zip
           if-no-files-found: error
 
   release:
-    if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.version != '')
-    needs: build
+    if: github.event_name == 'workflow_dispatch' && inputs.version != ''
+    needs: [test, windows-setup, sources]
     runs-on: ubuntu-latest
     permissions:
-      contents: write  # only this job may create the release
+      contents: write  # only this job may change releases
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/download-artifact@v4
         with:
           path: out
           merge-multiple: true
-
       - name: Checksums
         working-directory: out
         run: sha256sum * > SHA256SUMS.txt && cat SHA256SUMS.txt
-
-      - name: Publish release
+      - name: Replace the release
         env:
           GH_TOKEN: ${{ github.token }}
-          VERSION: ${{ inputs.version || github.ref_name }}
+          VERSION: ${{ inputs.version }}
         run: |
           case "$VERSION" in v[0-9]*) ;; *) echo "bad version: $VERSION"; exit 1 ;; esac
-          # Creates the tag on GitHub at this commit if it does not exist yet.
+          gh release delete "$VERSION" --repo "$GITHUB_REPOSITORY" --cleanup-tag --yes || true
+          gh api -X DELETE "repos/$GITHUB_REPOSITORY/git/refs/tags/$VERSION" 2>/dev/null || true
           gh release create "$VERSION" out/* \
+            --repo "$GITHUB_REPOSITORY" \
             --target "$GITHUB_SHA" \
             --title "Interceptium $VERSION" \
             --notes-file RELEASE_NOTES.md

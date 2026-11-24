@@ -155,9 +155,9 @@ class GuiTests(GuiBase):
 
     def test_popups_animate_open_and_close(self) -> None:
         from interceptium.ui import overlay
-        self.win.open_settings()
+        self.win.add_rule()
         page = self.win.pages[-1]
-        self.assertIsInstance(page, self.gui.SettingsPage)
+        self.assertIsInstance(page, self.gui.RulePage)
         a = self.anim.get()
         f0, t0 = a.frames, time.perf_counter()
         self.pump(0.05)
@@ -170,12 +170,11 @@ class GuiTests(GuiBase):
         self.assertAlmostEqual(page.opacity, 1.0)
         self.assertAlmostEqual(page.offset, 0.0)
         self.assertAlmostEqual(self.win.overlay.backdrop.level, overlay.DIM, places=3)
-        # centred over the main window
         cx = page.winfo_rootx() + page.winfo_width() / 2
         rx = self.root.winfo_rootx() + self.root.winfo_width() / 2
         self.assertLess(abs(cx - rx), 3)
         # nested pop-up, then Escape twice
-        page._uninstall()
+        self.win.push_page(self.gui.ConfirmPage(self.win, "Sure?", "Nested", lambda: None))
         self.wait_slide()
         self.assertEqual(len(self.win.pages), 2)
         self.win.pages[-1].event_generate("<Escape>")
@@ -345,6 +344,82 @@ class ConfigSmoothness(GuiBase):
         self.pump(0.4)
         self.assertFalse(row.winfo_exists())
         self.assertNotIn("Grow", self.win.config_rows)
+
+
+class SettingsPageTests(GuiBase):
+    def open(self):
+        self.win.open_settings()
+        self.pump(0.6)
+        self.assertFalse(self.win.stage.sliding)
+        return self.win.settings
+
+    def test_settings_slides_in_and_out(self) -> None:
+        self.win.open_settings()
+        self.pump(0.1)
+        self.assertTrue(self.win.stage.sliding)
+        self.assertGreater(self.win.settings.winfo_x(), 0)  # still coming in
+        self.pump(0.5)
+        self.assertEqual(self.win.settings.winfo_x(), 0)
+        self.assertFalse(self.win.shell.winfo_ismapped())
+        view = self.win.settings
+        self.root.event_generate("<Escape>")
+        self.pump(0.6)
+        self.assertIsNone(self.win.settings)
+        self.assertFalse(view.winfo_exists())
+        self.assertEqual(self.win.shell.winfo_x(), 0)
+
+    def test_tabs_slide_and_settings_save(self) -> None:
+        view = self.open()
+        view.tabs.set("roblox")
+        view.show_tab("roblox")
+        self.pump(0.1)
+        self.assertTrue(view.tab_stage.sliding)
+        self.pump(0.4)
+        self.assertEqual(view.current_tab, "roblox")
+        view.tabs.set("general")
+        view.show_tab("general")
+        self.pump(0.45)
+        view.port.var.set("60123")
+        self.assertEqual(self.win.store.settings.port, 60123)
+
+    def test_installation_tab_without_setup(self) -> None:
+        view = self.open()
+        view.show_tab("install")
+        self.pump(0.45)
+        self.assertIsNone(view.setup_exe)
+        page = view.tab_stage.current
+        buttons = [w for w in page.winfo_children()[0].body.winfo_children()[-1].winfo_children()]
+        self.assertEqual([b.text for b in buttons], ["Repair", "Reinstall", "Uninstall"])
+        self.assertTrue(all(not b.enabled for b in buttons))
+
+    def test_installation_actions_launch_setup(self) -> None:
+        launched = []
+        installation = self.gui.installation
+        orig_find, orig_launch = installation.find_setup, installation.launch_setup
+        installation.find_setup = lambda: Path("C:/Interceptium/Interceptium Setup.exe")
+        installation.launch_setup = lambda action, setup=None: launched.append((action, str(setup))) or True
+        closed = []
+        self.win.on_close = lambda: closed.append(True)  # keep the window for the test
+        try:
+            view = self.open()
+            view.show_tab("install")
+            self.pump(0.45)
+            page = view.tab_stage.current
+            buttons = page.winfo_children()[0].body.winfo_children()[-1].winfo_children()
+            self.assertTrue(all(b.enabled for b in buttons))
+            view._maintenance("uninstall")
+            self.wait_popup()
+            self.win.pages[-1].primary()
+            self.pump(0.3)
+            self.assertEqual(launched, [("uninstall", str(Path("C:/Interceptium/Interceptium Setup.exe")))])
+            self.assertEqual(closed, [True])
+        finally:
+            installation.find_setup, installation.launch_setup = orig_find, orig_launch
+            del self.win.on_close  # restore the real close so tearDown destroys the window
+
+    def wait_popup(self) -> None:
+        from interceptium.ui import overlay
+        self.pump(overlay.OPEN_TIME + 0.3)
 
 
 if __name__ == "__main__":

@@ -31,7 +31,13 @@ def main() -> int:
         "--exclude-module", "pydoc",
     ]
     if sys.platform == "win32":
-        args += ["--icon", str(ROOT / "assets" / "logo.ico")]
+        sys.path.insert(0, str(ROOT / "tools"))
+        sys.path.insert(0, str(ROOT / "src"))
+        import winversion
+        from interceptium import __version__
+
+        info = winversion.write(ROOT / "build" / "version_app.txt", __version__, "Interceptium", "Interceptium")
+        args += ["--icon", str(ROOT / "assets" / "logo.ico"), "--version-file", str(info)]
     elif sys.platform == "darwin":
         args += ["--icon", str(ROOT / "assets" / "logo.icns")]
     if sys.platform == "darwin":

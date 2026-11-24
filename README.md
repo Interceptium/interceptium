@@ -32,14 +32,31 @@ Interceptium was designed to do one job and nothing else:
 
 ## Download
 
-Get the latest build from the [Releases](../../releases) page:
+Get it from the [Releases](../../releases) page:
 
-- **Windows:** `Interceptium-windows-x64.exe`
-- **macOS:** `Interceptium-macos.zip`. The app isn't code-signed, so right-click it and choose **Open** the first time.
-- **Linux:** `Interceptium-linux-x64`. On Linux it runs the proxy only and doesn't set up Roblox automatically.
+| File | What it is |
+|---|---|
+| `Interceptium-Setup-1.0.0.exe` | Windows installer |
+| `Interceptium-1.0.0-source-windows.zip` | Source with the Windows build script (`scripts\build-windows.bat`) and the installer |
+| `Interceptium-1.0.0-source-linux.zip` | Source with `scripts/build-linux.sh` |
+| `Interceptium-1.0.0-source-macos.zip` | Source with `scripts/build-macos.sh` |
+| `Interceptium-Setup-1.0.0-source.zip` | Source of the installer only |
+| `SHA256SUMS.txt` | Checksums of the files above |
 
-`SHA256SUMS.txt` lists the checksum of each file. The builds are made by GitHub Actions from this
-repository's source (see `.github/workflows/release.yml`).
+Every file is built by GitHub Actions from this repository (`.github/workflows/release.yml`). Before a release is
+published, the installer is tested on Windows with a real install, repair and uninstall.
+
+### Windows installer
+
+Interceptium has its own installer (in `setup/`, no third-party installer tools):
+
+- Installs for your user only (`%LOCALAPPDATA%\Programs\Interceptium`), so no administrator prompt.
+- Start menu and Desktop shortcuts.
+- Shows up in **Settings > Apps** and **Control Panel > Programs**; Uninstall and Modify work from there.
+- **Repair**, **Reinstall** and **Uninstall** are in the installer and in Interceptium under **Settings > Installation**.
+- Uninstall removes only what it installed. Your configs stay unless you choose to delete them.
+
+See [setup/README.md](setup/README.md) for its command-line options.
 
 ## How to use
 
