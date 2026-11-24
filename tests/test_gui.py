@@ -147,34 +147,67 @@ class GuiTests(unittest.TestCase):
         self.assertFalse(a.active((self.win.power, "loop")), "animation loop should stop when idle")
 
     def wait_slide(self) -> None:
-        self.pump(self.gui.MainWindow.SLIDE_TIME + 0.25)
-        self.assertFalse(self.win._sliding)
+        from interceptium.ui import overlay
+        self.pump(overlay.OPEN_TIME + 0.3)
+        self.assertFalse(any(self.anim.get().active((p, "show")) for p in self.win.pages))
 
-    def test_pages_slide_instead_of_popups(self) -> None:
+    def test_popups_animate_open_and_close(self) -> None:
+        from interceptium.ui import overlay
         self.win.open_settings()
-        self.assertTrue(self.win._sliding)
-        a = self.anim.get()
-        f0, t0 = a.frames, time.perf_counter()
-        self.pump(self.gui.MainWindow.SLIDE_TIME)
-        fps = (a.frames - f0) / (time.perf_counter() - t0)
-        self.assertGreater(fps, 50, f"slide ran at {fps:.1f} fps")
-        self.wait_slide()
         page = self.win.pages[-1]
         self.assertIsInstance(page, self.gui.SettingsPage)
-        self.assertEqual(page.winfo_x(), 0)
-        self.assertFalse(self.win.shell.winfo_ismapped())
-        self.assertEqual([w for w in self.root.winfo_children() if isinstance(w, self.gui.tk.Toplevel)], [])
-        # nested page, then back twice with Escape
+        a = self.anim.get()
+        f0, t0 = a.frames, time.perf_counter()
+        self.pump(0.05)
+        self.assertGreater(page.opacity, 0.0)
+        self.assertLess(page.opacity, 1.0)  # mid fade-in
+        self.pump(overlay.OPEN_TIME)
+        fps = (a.frames - f0) / (time.perf_counter() - t0)
+        self.assertGreater(fps, 50, f"open animation ran at {fps:.1f} fps")
+        self.wait_slide()
+        self.assertAlmostEqual(page.opacity, 1.0)
+        self.assertAlmostEqual(page.offset, 0.0)
+        self.assertAlmostEqual(self.win.overlay.backdrop.level, overlay.DIM, places=3)
+        # centred over the main window
+        cx = page.winfo_rootx() + page.winfo_width() / 2
+        rx = self.root.winfo_rootx() + self.root.winfo_width() / 2
+        self.assertLess(abs(cx - rx), 3)
+        # nested pop-up, then Escape twice
         page._uninstall()
         self.wait_slide()
-        self.assertIsInstance(self.win.pages[-1], self.gui.ConfirmPage)
-        self.root.event_generate("<Escape>")
-        self.wait_slide()
-        self.root.event_generate("<Escape>")
-        self.wait_slide()
+        self.assertEqual(len(self.win.pages), 2)
+        self.win.pages[-1].event_generate("<Escape>")
+        self.pump(overlay.CLOSE_TIME + 0.2)
+        self.assertEqual(len(self.win.pages), 1)
+        self.assertAlmostEqual(self.win.overlay.backdrop.level, overlay.DIM, places=3)
+        self.win.pages[-1].event_generate("<Escape>")
+        self.pump(overlay.CLOSE_TIME + 0.3)
         self.assertEqual(self.win.pages, [])
-        self.assertTrue(self.win.shell.winfo_ismapped())
-        self.assertEqual(self.win.shell.winfo_x(), 0)
+        self.assertAlmostEqual(self.win.overlay.backdrop.level, 0.0, places=3)
+        self.assertEqual(self.win.overlay.backdrop.state(), "withdrawn")
+
+    def test_backdrop_click_closes(self) -> None:
+        from interceptium.ui import overlay
+        self.win.new_config()
+        self.wait_slide()
+        bd = self.win.overlay.backdrop
+        bd.event_generate("<ButtonRelease-1>", x=5, y=5)
+        self.pump(overlay.CLOSE_TIME + 0.3)
+        self.assertEqual(self.win.pages, [])
+
+    def test_popup_grows_smoothly_when_asset_added(self) -> None:
+        from interceptium.ui import overlay
+        self.win.add_rule()
+        self.wait_slide()
+        page = self.win.pages[-1]
+        h0 = page.h
+        page.assets.add()
+        self.pump(0.06)
+        mid = page.h
+        self.pump(overlay.RESIZE_TIME + 0.2)
+        self.assertGreater(page.h, h0)
+        self.assertTrue(h0 < mid < page.h or mid == page.h, (h0, mid, page.h))
+        self.assertEqual(int(page.h), page.winfo_height())
 
     def test_rule_page_assets_add_remove_and_save(self) -> None:
         before = len(self.saved()["replacement_rules"])
@@ -199,7 +232,7 @@ class GuiTests(unittest.TestCase):
         self.assertEqual([r[1].cget("text") for r in assets.rows], ["Asset 1", "Asset 2"])
         page.value.var.set("999999")
         page.primary()
-        self.wait_slide()
+        self.pump(0.4)
         rules = self.saved()["replacement_rules"]
         self.assertEqual(len(rules), before + 1)
         self.assertEqual(rules[-1]["replace_ids"], ["123456", "Image"])
@@ -225,7 +258,7 @@ class GuiTests(unittest.TestCase):
         page._mode_changed("local")
         page.value.var.set(str(pack / "sky.png"))
         page.primary()
-        self.wait_slide()
+        self.pump(0.4)
         self.assertEqual(self.saved()["replacement_rules"][-1]["local_path"], "/Pack/sky.png")
 
     def test_resize_and_rapid_hover(self) -> None:
@@ -247,7 +280,7 @@ class GuiTests(unittest.TestCase):
         self.win.delete_config()
         self.wait_slide()
         self.win.pages[-1].primary()
-        self.wait_slide()
+        self.pump(0.4)
         self.assertEqual(self.win.store.names(), ["Default"])
         self.assertEqual(self.win.selected, "Default")
 
@@ -256,8 +289,8 @@ class GuiTests(unittest.TestCase):
         self.wait_slide()
         page = self.win.pages[-1]
         page.field.var.set("Skies")
-        self.root.event_generate("<Return>")
-        self.wait_slide()
+        page.event_generate("<Return>")
+        self.pump(0.4)
         self.assertIn("Skies", self.win.store.names())
         self.assertEqual(self.win.selected, "Skies")
 

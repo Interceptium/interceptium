@@ -45,7 +45,7 @@ repository's source (see `.github/workflows/release.yml`).
 
 1. Open Interceptium.
 2. In **Configs** (left), pick a config or press **+** to make one. Every config with its switch **on** runs, so you can mix packs.
-3. Press **Add rule**:
+3. Press **Add rule** (one field per asset; **Add asset** adds another):
    - **Assets to change:** asset IDs or asset types, for example `1234567 2345678` or `Image`.
    - **Action:** *Replace* (with another asset ID), *Remove*, or *Local file*.
 4. Press the power button to start the proxy.

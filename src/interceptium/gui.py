@@ -17,6 +17,7 @@ from .app import Controller
 from .logbus import log
 from .rules import MODE_LABELS, describe, iter_rules, parse_target_text, rule_mode
 from .ui import anim, fonts, gfx
+from .ui.overlay import OverlayHost, Popup
 from .ui import theme as T
 from .ui.widgets import (
     Button, Card, Field, Host, IconButton, IconButtonC, PowerButton, ScrollArea, Segmented, StatusPill, Toggle,
@@ -65,30 +66,12 @@ def count_rules(entries: list) -> tuple[int, int]:
 
 
 # ------------------------------------------------------------------ pages --
-class Page(tk.Frame):
-    """A full-window view that slides in over the previous one (no pop-up windows)."""
+class Page(Popup):
+    """A pop-up over a dimmed backdrop with smooth open/close animations."""
 
-    def __init__(self, win: "MainWindow", title: str) -> None:
-        super().__init__(win.stage, bg=T.BG)
+    def __init__(self, win: "MainWindow", title: str, width: int = 540) -> None:
+        super().__init__(win.overlay, title, width)
         self.win = win
-        head = tk.Frame(self, bg=T.BG, padx=T.S(20), pady=T.S(16))
-        head.pack(fill="x")
-        IconButton(head, "back", self.close, kind="ghost", size=38, icon_size=18).pack(side="left")
-        label(head, title, 16, "bold").pack(side="left", padx=T.S(14))
-        self.scroll = ScrollArea(self, T.BG)
-        self.scroll.pack(fill="both", expand=True, padx=T.S(20), pady=(0, T.S(16)))
-        column = tk.Frame(self.scroll.inner, bg=T.BG)
-        column.pack(fill="x")
-        self.card = Card(column, fill=T.SURFACE, radius=22, pad=26)
-        self.card.pack(pady=(T.S(4), T.S(4)))
-        self.body = self.card.body
-        self.first_focus: tk.Widget | None = None
-
-    def close(self) -> None:
-        self.win.pop_page()
-
-    def primary(self) -> None:
-        """Action for the Return key."""
 
     def field_label(self, text: str, parent: tk.Misc | None = None, top: int = 14) -> tk.Label:
         lab = label(parent or self.body, text, 9, "bold", T.MUTED)
@@ -96,8 +79,8 @@ class Page(tk.Frame):
         return lab
 
     def buttons(self, ok_text: str, on_ok: Callable[[], None], kind: str = "primary") -> None:
-        row = tk.Frame(self.body, bg=T.SURFACE)
-        row.pack(fill="x", pady=(T.S(24), 0))
+        row = tk.Frame(self.footer, bg=T.SURFACE)
+        row.pack(fill="x", pady=(T.S(20), 0), padx=(0, T.S(12)))  # line up with the scroll gutter
         Button(row, ok_text, on_ok, kind=kind).pack(side="right")
         Button(row, "Cancel", self.close, kind="ghost").pack(side="right", padx=T.S(8))
 
@@ -105,10 +88,10 @@ class Page(tk.Frame):
 class PromptPage(Page):
     def __init__(self, win: "MainWindow", title: str, on_ok: Callable[[str], None], value: str = "",
                  ok: str = "Save") -> None:
-        super().__init__(win, title)
+        super().__init__(win, title, width=500)
         self.on_ok = on_ok
         self.field_label("Name", top=0)
-        self.field = Field(self.body, value, width=420)
+        self.field = Field(self.body, value, width=470)
         self.field.pack(fill="x")
         self.first_focus = self.field.entry
         self.buttons(ok, self.primary)
@@ -123,10 +106,9 @@ class PromptPage(Page):
 class ConfirmPage(Page):
     def __init__(self, win: "MainWindow", title: str, message: str, on_confirm: Callable[[], None],
                  ok: str = "Delete") -> None:
-        super().__init__(win, title)
+        super().__init__(win, title, width=500)
         self.on_confirm = on_confirm
-        label(self.body, message, 10, color=T.MUTED, justify="left", wraplength=T.S(420)).pack(anchor="w")
-        tk.Frame(self.body, bg=T.SURFACE, width=T.S(420), height=1).pack()
+        label(self.body, message, 10, color=T.MUTED, justify="left", wraplength=T.S(470)).pack(anchor="w")
         self.buttons(ok, self.primary, kind="danger")
 
     def primary(self) -> None:
@@ -336,7 +318,6 @@ class SettingsPage(Page):
     def _row(self, title: str, widget, value, command, first: bool = False) -> tk.Frame:
         card = Card(self.body, fill=T.CARD, radius=14, pad=14)
         card.pack(fill="x", pady=(0 if first else T.S(8), 0))
-        tk.Frame(card.body, bg=T.CARD, width=T.S(400), height=1).pack(side="bottom")
         label(card.body, title, 10, "bold").pack(side="left")
         if widget is not None:
             widget(card.body, value, command).pack(side="right")
@@ -576,13 +557,10 @@ class MainWindow:
         self._set_icons()
         install_wheel(root)
 
-        self.stage = tk.Frame(root, bg=T.BG)
-        self.stage.pack(fill="both", expand=True)
-        shell = tk.Frame(self.stage, bg=T.BG, padx=T.S(20), pady=T.S(16))
-        shell.place(x=0, y=0, relwidth=1, relheight=1)
+        shell = tk.Frame(root, bg=T.BG, padx=T.S(20), pady=T.S(16))
+        shell.pack(fill="both", expand=True)
         self.shell = shell
-        self.pages: list[Page] = []
-        self._sliding = False
+        self.overlay = OverlayHost(root)
         shell.columnconfigure(1, weight=1)
         shell.rowconfigure(1, weight=1)
         self._build_header(shell)
@@ -594,8 +572,7 @@ class MainWindow:
         self.refresh_rules()
         root.protocol("WM_DELETE_WINDOW", self.on_close)
         self.ui_calls: queue.Queue[Callable[[], None]] = queue.Queue()
-        root.bind("<Escape>", lambda _e: self.pop_page(), add="+")
-        root.bind("<Return>", self._on_return, add="+")
+
         self._pump_job: str | None = root.after(50, self._pump_log)
         log.emit("App", f"{APP_NAME} {__version__}")
 
@@ -699,55 +676,16 @@ class MainWindow:
             self.log_wrap.pack(fill="x", pady=(T.S(8), 0))
             self.log_toggle.set_text("Hide")
 
-    # -- page navigation -------------------------------------------------
-    SLIDE_TIME = 0.34
+    # -- pop-ups -----------------------------------------------------------
+    @property
+    def pages(self) -> list[Popup]:
+        return self.overlay.popups
 
-    def push_page(self, page: Page) -> None:
-        if self._sliding:
-            page.destroy()
-            return
-        below = self.pages[-1] if self.pages else self.shell
-        self.pages.append(page)
-        self._slide(below, page, forward=True)
+    def push_page(self, page: Popup) -> None:
+        self.overlay.open(page)
 
     def pop_page(self) -> None:
-        if self._sliding or not self.pages:
-            return
-        page = self.pages.pop()
-        below = self.pages[-1] if self.pages else self.shell
-        self._slide(below, page, forward=False)
-
-    def _slide(self, below: tk.Frame, page: Page, forward: bool) -> None:
-        """Slide ``page`` in from the right (or back out), nudging ``below`` with a parallax offset."""
-        self._sliding = True
-        self.root.focus_set()
-        width = max(1, self.stage.winfo_width())
-        below.place(x=0 if forward else -int(width * 0.3), y=0, relwidth=1, relheight=1)
-        page.place(x=width if forward else 0, y=0, relwidth=1, relheight=1)
-        page.lift()
-
-        def step(v: float) -> None:
-            t = v if forward else 1.0 - v
-            below.place_configure(x=-int(width * 0.3 * t))
-            page.place_configure(x=int(width * (1.0 - t)))
-
-        def done() -> None:
-            self._sliding = False
-            if forward:
-                below.place_forget()
-                if page.first_focus is not None:
-                    page.first_focus.focus_set()
-            else:
-                page.destroy()
-                below.place_configure(x=0)
-                if below is self.shell:
-                    self.address.configure(text=self.ctl.proxy_url.removeprefix("http://"))
-
-        anim.get().tween((self, "slide"), self.SLIDE_TIME, step, ease=anim.ease_in_out, done=done)
-
-    def _on_return(self, _e: tk.Event) -> None:
-        if self.pages and not self._sliding:
-            self.pages[-1].primary()
+        self.overlay.close_top()
 
     # -- background work -------------------------------------------------
     def _bg(self, fn: Callable[[], object], done: Callable[[], None] | None = None) -> None:
@@ -814,7 +752,10 @@ class MainWindow:
         self._bg(roblox.clear_cache)
 
     def open_settings(self) -> None:
-        self.push_page(SettingsPage(self))
+        page = SettingsPage(self)
+        page.bind("<Destroy>", lambda e: e.widget is page and self.address.configure(
+            text=self.ctl.proxy_url.removeprefix("http://")), add="+")
+        self.push_page(page)
 
     # -- configs -----------------------------------------------------------
     def refresh_configs(self) -> None:
@@ -1055,6 +996,7 @@ class MainWindow:
                 self.root.after_cancel(job)
         self.ctl.shutdown()
         anim.get().stop_all()
+        self.overlay.close_all()
         self.root.destroy()
 
 
