@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -29,8 +30,9 @@ def find_setup() -> Path | None:
     if sys.platform != "win32":
         return None
     candidates: list[Path] = []
-    if getattr(sys, "frozen", False):
-        candidates.append(Path(sys.executable).parent / SETUP_EXE)
+    launched_from = os.environ.get("INTERCEPTIUM_INSTALL_DIR")  # set by the Interceptium.exe launcher
+    if launched_from:
+        candidates.append(Path(launched_from) / SETUP_EXE)
     location = install_location()
     if location is not None:
         candidates.append(location / SETUP_EXE)

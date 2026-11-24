@@ -186,6 +186,64 @@ class EntryPointTests(Fixture):
         self.assertIn("failed: This setup file is incomplete", log.read_text())
 
 
+
+class FolderPayloadTests(unittest.TestCase):
+    """The Windows build installs a folder: launcher, signed Python runtime and the app."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+        self.ops = FakeOps(self.root / "sandbox")
+        self.bundle = self.root / "bundle"
+        for name, data in {
+            "Interceptium.exe": b"launcher",
+            "runtime/pythonw.exe": b"py",
+            "runtime/Lib/tkinter/__init__.py": b"tk",
+            "app/run_interceptium.py": b"run",
+            "app/src/interceptium/__init__.py": b"init",
+        }.items():
+            path = self.bundle / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(data)
+        self.installer = Installer(self.ops, self.bundle, None, "1.0.0")
+        self.dest = self.root / "Programs" / "Interceptium"
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+
+    def test_installs_and_removes_the_whole_tree(self) -> None:
+        manifest = self.installer.install(Options(self.dest))
+        self.assertEqual((self.dest / "runtime" / "Lib" / "tkinter" / "__init__.py").read_bytes(), b"tk")
+        self.assertIn("app/src/interceptium/__init__.py", manifest.files)
+        self.installer.uninstall(self.dest)
+        self.assertFalse(self.dest.exists())
+
+    def test_user_files_and_their_folders_survive_uninstall(self) -> None:
+        self.installer.install(Options(self.dest))
+        mine = self.dest / "runtime" / "notes.txt"
+        mine.write_text("mine")
+        self.installer.uninstall(self.dest)
+        self.assertTrue(mine.exists())
+        self.assertFalse((self.dest / "runtime" / "pythonw.exe").exists())
+        self.assertFalse((self.dest / "app").exists())
+
+    def test_upgrade_removes_files_the_new_version_dropped(self) -> None:
+        self.installer.install(Options(self.dest))
+        (self.bundle / "app" / "src" / "interceptium" / "__init__.py").unlink()
+        self.installer.install(Options(self.dest))
+        self.assertFalse((self.dest / "app" / "src").exists())
+        self.assertTrue((self.dest / "app" / "run_interceptium.py").exists())
+
+    def test_manifest_paths_cannot_escape(self) -> None:
+        self.installer.install(Options(self.dest))
+        victim = self.root / "victim.txt"
+        victim.write_text("keep")
+        data = json.loads((self.dest / MANIFEST).read_text())
+        data["files"] += ["runtime/../../../victim.txt", "/victim.txt", "C:/victim.txt", "a\\..\\victim.txt"]
+        (self.dest / MANIFEST).write_text(json.dumps(data))
+        self.installer.uninstall(self.dest)
+        self.assertTrue(victim.exists())
+
 class TempCopyCleanupTests(unittest.TestCase):
     def test_old_temp_copies_are_removed_but_not_the_running_one(self) -> None:
         import tempfile as tf

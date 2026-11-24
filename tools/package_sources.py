@@ -49,18 +49,24 @@ def write_zip(path: Path, prefix: str, files: list[str]) -> Path:
 def main(out: Path = ROOT / "dist" / "release") -> list[Path]:
     files = tracked_files()
     all_scripts = {s for scripts in PLATFORM_SCRIPTS.values() for s in scripts}
-    common = [f for f in files if f not in all_scripts and not f.startswith("setup/")]
+    windows_only = ("windows/", "tools/build_windows.py", "tools/pack_setup.py")
+    common = [f for f in files if f not in all_scripts and not f.startswith("setup/")
+              and not f.startswith(windows_only)]
+    common_windows = [f for f in files if f.startswith(("tools/build_windows.py", "tools/pack_setup.py"))]
     setup_files = [f for f in files if f.startswith("setup/")]
     made = []
     for platform, scripts in PLATFORM_SCRIPTS.items():
         chosen = common + [s for s in scripts if s in files]
         if platform == "windows":
-            chosen += setup_files
+            chosen += common_windows
+        if platform == "windows":
+            chosen += setup_files + [f for f in files if f.startswith("windows/")]
         made.append(write_zip(out / f"Interceptium-{__version__}-source-{platform}.zip",
                               f"Interceptium-{__version__}-{platform}", sorted(chosen)))
-    toolkit = [f for f in files if f.startswith("src/interceptium/ui/")] + ["src/interceptium/__init__.py"]
-    setup_zip = setup_files + toolkit + [f for f in files if f.startswith("assets/")] + [
-        "tools/winversion.py", "scripts/build-setup.bat", "requirements.txt", "requirements-build.txt", "LICENSE"]
+    toolkit = [f for f in files if f.startswith("src/interceptium/")]  # the installer packs the whole app
+    setup_zip = setup_files + toolkit + [f for f in files if f.startswith(("assets/", "windows/"))] + [
+        "tools/build_windows.py", "tools/pack_setup.py", "scripts/build-setup.bat", "run_interceptium.py",
+        "requirements.txt", "LICENSE"]
     made.append(write_zip(out / f"Interceptium-Setup-{__version__}-source.zip",
                           f"Interceptium-Setup-{__version__}", sorted(set(f for f in setup_zip if f in files))))
     for path in made:

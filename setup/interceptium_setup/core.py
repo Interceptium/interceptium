@@ -88,8 +88,41 @@ class Manifest:
 
 
 def _safe_relative(name: str) -> bool:
-    """Manifest entries must be plain file names inside the install folder."""
-    return bool(name) and "/" not in name and "\\" not in name and name not in (".", "..") and ":" not in name
+    """Manifest entries must be relative paths that stay inside the install folder.
+
+    Forward slashes separate folders; absolute paths, drive letters, backslashes
+    and "." / ".." segments are refused.
+    """
+    if not name or "\\" in name or ":" in name or name.startswith("/"):
+        return False
+    return all(part not in ("", ".", "..") for part in name.split("/"))
+
+
+def _remove_empty_dirs(directory: Path, names: list[str]) -> None:
+    """Remove folders (inside `directory`) that are empty after deleting `names`; deepest first."""
+    folders: set[Path] = set()
+    for name in names:
+        parts = name.split("/")[:-1]
+        for i in range(len(parts), 0, -1):
+            folders.add(directory.joinpath(*parts[:i]))
+    for folder in sorted(folders, key=lambda p: len(p.parts), reverse=True):
+        try:
+            folder.rmdir()  # only succeeds when empty
+        except OSError:
+            pass
+
+
+def payload_files(payload: Path) -> list[tuple[str, Path]]:
+    """(manifest name, source file) pairs for a payload folder, or a single app exe."""
+    if payload.is_file():
+        return [(APP_EXE, payload)]
+    out = []
+    for path in sorted(payload.rglob("*")):
+        if path.is_file():
+            name = path.relative_to(payload).as_posix()
+            if _safe_relative(name):
+                out.append((name, path))
+    return out
 
 
 class SystemOps(Protocol):
@@ -142,7 +175,7 @@ def default_directory() -> Path:
 class Installer:
     def __init__(self, ops: SystemOps, payload: Path | None, setup_exe: Path | None, version: str) -> None:
         self.ops = ops
-        self.payload = payload        # the Interceptium.exe to install
+        self.payload = payload        # folder with the files to install (or a single Interceptium.exe)
         self.setup_exe = setup_exe    # this installer, copied in for repair/uninstall later
         self.version = version
 
@@ -159,7 +192,7 @@ class Installer:
 
     # -- install -------------------------------------------------------------
     def install(self, options: Options, progress: Progress = _no_progress) -> Manifest:
-        if self.payload is None or not self.payload.is_file():
+        if self.payload is None or not self.payload.exists() or not payload_files(self.payload):
             raise SetupError("This setup file is incomplete. Download it again.")
         directory = Path(options.directory).expanduser()
         if not directory.is_absolute():
@@ -175,11 +208,22 @@ class Installer:
         except OSError as exc:
             raise SetupError(f"Can't write to {directory}. Choose another folder.") from exc
 
+        previous = Manifest.load(directory)
         files: list[str] = []
+        sources = payload_files(self.payload)
+        total = max(1, sum(src.stat().st_size for _name, src in sources))
+        done = 0
         progress(0.08, "Copying Interceptium")
-        copy_with_progress(self.payload, directory / APP_EXE,
-                           lambda f: progress(0.08 + 0.62 * f, "Copying Interceptium"))
-        files.append(APP_EXE)
+        for name, src in sources:
+            target = directory.joinpath(*name.split("/"))
+            target.parent.mkdir(parents=True, exist_ok=True)
+            size = src.stat().st_size
+            base = done
+            copy_with_progress(src, target,
+                               lambda f, b=base, n=size: progress(0.08 + 0.62 * (b + f * n) / total,
+                                                                  "Copying Interceptium"))
+            done += size
+            files.append(name)
         if self.setup_exe is not None and self.setup_exe.is_file():
             target = directory / SETUP_EXE
             if self.setup_exe.resolve() != target.resolve():
@@ -199,22 +243,29 @@ class Installer:
             self.ops.create_shortcut(link, app, app)
             shortcuts.append(str(link))
 
+        if previous is not None:  # files an older version installed that this one no longer has
+            stale = [n for n in previous.files if n not in files and n not in (SETUP_EXE, MANIFEST)]
+            for name in stale:
+                _retry(lambda p=directory.joinpath(*name.split("/")): p.unlink())
+            _remove_empty_dirs(directory, stale)
+
         progress(0.93, "Registering with Windows")
         manifest = Manifest(self.version, str(directory), files + [MANIFEST], shortcuts,
                             options.desktop_shortcut, options.start_menu_shortcut)
         manifest.save()
-        self.ops.write_uninstall_entry(self._entry(directory))
+        self.ops.write_uninstall_entry(self._entry(directory, manifest.files))
         progress(1.0, "Done")
         return manifest
 
-    def _entry(self, directory: Path) -> dict[str, object]:
+    def _entry(self, directory: Path, files: list[str]) -> dict[str, object]:
         setup = directory / SETUP_EXE
-        size_kb = 0
-        for name in (APP_EXE, SETUP_EXE):
+        size = 0
+        for name in files:
             try:
-                size_kb += (directory / name).stat().st_size // 1024
+                size += directory.joinpath(*name.split("/")).stat().st_size
             except OSError:
                 pass
+        size_kb = size // 1024
         return {
             "DisplayName": APP_NAME,
             "DisplayVersion": self.version,
@@ -245,10 +296,13 @@ class Installer:
             _retry(link.unlink)
         progress(0.5, "Removing files")
         files = manifest.files if manifest else [APP_EXE, SETUP_EXE, MANIFEST]
+        files = [n for n in files if _safe_relative(n)]
+        step = max(1, len(files) // 40)
         for i, name in enumerate(files):
-            if _safe_relative(name):
-                _retry(lambda p=directory / name: p.unlink())
-            progress(0.5 + 0.3 * (i + 1) / max(1, len(files)), "Removing files")
+            _retry(lambda p=directory.joinpath(*name.split("/")): p.unlink())
+            if i % step == 0 or i == len(files) - 1:
+                progress(0.5 + 0.3 * (i + 1) / max(1, len(files)), "Removing files")
+        _remove_empty_dirs(directory, files)
         for leftover in (directory / (APP_EXE + ".partial"), directory / (SETUP_EXE + ".partial")):
             _retry(leftover.unlink)
         try:

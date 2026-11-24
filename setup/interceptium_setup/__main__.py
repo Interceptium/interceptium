@@ -21,9 +21,9 @@ import traceback
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-if not getattr(sys, "frozen", False):
-    # running from a source checkout: make the app's UI toolkit importable
-    sys.path.insert(0, str(HERE.parent.parent / "src"))
+for _src in (HERE.parent.parent / "src",):  # the app's UI toolkit (source checkout or bundle)
+    if _src.is_dir() and str(_src) not in sys.path:
+        sys.path.insert(0, str(_src))
 
 from interceptium import __version__  # noqa: E402
 
@@ -31,16 +31,23 @@ from .core import APP_EXE, Installer, Options, SetupError, default_directory  # 
 
 
 def payload_path() -> Path | None:
-    if getattr(sys, "frozen", False):
-        candidate = Path(getattr(sys, "_MEIPASS", HERE)) / "payload" / APP_EXE
-    else:
-        env = os.environ.get("INTERCEPTIUM_PAYLOAD")
-        candidate = Path(env) if env else HERE.parent.parent / "dist" / APP_EXE
-    return candidate if candidate.is_file() else None
+    """What gets installed.
+
+    From the Windows setup file: the folder its stub unpacked (INTERCEPTIUM_BUNDLE),
+    which holds Interceptium.exe, the signed Python runtime and the app.
+    From source: INTERCEPTIUM_PAYLOAD, or dist/bundle.
+    """
+    for candidate in (os.environ.get("INTERCEPTIUM_BUNDLE"), os.environ.get("INTERCEPTIUM_PAYLOAD")):
+        if candidate and Path(candidate).exists():
+            return Path(candidate)
+    fallback = HERE.parent.parent / "dist" / "bundle"
+    return fallback if fallback.exists() else None
 
 
 def setup_path() -> Path | None:
-    return Path(sys.executable) if getattr(sys, "frozen", False) else None
+    """The setup .exe the user ran (set by the stub); copied in for repair/uninstall later."""
+    value = os.environ.get("INTERCEPTIUM_SETUP_EXE")
+    return Path(value) if value and Path(value).is_file() else None
 
 
 def make_ops():
