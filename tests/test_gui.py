@@ -146,22 +146,87 @@ class GuiTests(unittest.TestCase):
         self.assertFalse(self.win.ctl.running)
         self.assertFalse(a.active((self.win.power, "loop")), "animation loop should stop when idle")
 
-    def test_rule_dialog_validation_and_save(self) -> None:
-        dlg = self.gui.RuleDialog(self.root, None, self.win.store.folder)
-        dlg.targets.var.set("12")  # too small to be an asset ID
-        dlg._save()
-        self.assertTrue(dlg.error.cget("text"))
+    def wait_slide(self) -> None:
+        self.pump(self.gui.MainWindow.SLIDE_TIME + 0.25)
+        self.assertFalse(self.win._sliding)
+
+    def test_pages_slide_instead_of_popups(self) -> None:
+        self.win.open_settings()
+        self.assertTrue(self.win._sliding)
+        a = self.anim.get()
+        f0, t0 = a.frames, time.perf_counter()
+        self.pump(self.gui.MainWindow.SLIDE_TIME)
+        fps = (a.frames - f0) / (time.perf_counter() - t0)
+        self.assertGreater(fps, 50, f"slide ran at {fps:.1f} fps")
+        self.wait_slide()
+        page = self.win.pages[-1]
+        self.assertIsInstance(page, self.gui.SettingsPage)
+        self.assertEqual(page.winfo_x(), 0)
+        self.assertFalse(self.win.shell.winfo_ismapped())
+        self.assertEqual([w for w in self.root.winfo_children() if isinstance(w, self.gui.tk.Toplevel)], [])
+        # nested page, then back twice with Escape
+        page._uninstall()
+        self.wait_slide()
+        self.assertIsInstance(self.win.pages[-1], self.gui.ConfirmPage)
+        self.root.event_generate("<Escape>")
+        self.wait_slide()
+        self.root.event_generate("<Escape>")
+        self.wait_slide()
+        self.assertEqual(self.win.pages, [])
+        self.assertTrue(self.win.shell.winfo_ismapped())
+        self.assertEqual(self.win.shell.winfo_x(), 0)
+
+    def test_rule_page_assets_add_remove_and_save(self) -> None:
+        before = len(self.saved()["replacement_rules"])
+        self.win.add_rule()
+        self.wait_slide()
+        page = self.win.pages[-1]
+        assets = page.assets
+        self.assertEqual(len(assets.rows), 1)
+        self.assertFalse(assets.rows[0][3].winfo_manager())  # no remove button with one row
+        assets.rows[0][2].var.set("123456")
+        assets.add()
+        assets.add()
+        self.pump(0.1)
+        self.assertEqual([r[1].cget("text") for r in assets.rows], ["Asset 1", "Asset 2", "Asset 3"])
+        assets.rows[1][2].var.set("Image")
+        assets.rows[2][2].var.set("12")  # invalid
+        page.name.var.set("Multi")
+        page.primary()
+        self.assertTrue(page.error.cget("text").startswith("Asset 3:"))
+        remove = assets.rows[2][3]
+        self.click(remove, remove.c.d // 2, remove.c.d // 2)
+        self.assertEqual([r[1].cget("text") for r in assets.rows], ["Asset 1", "Asset 2"])
+        page.value.var.set("999999")
+        page.primary()
+        self.wait_slide()
+        rules = self.saved()["replacement_rules"]
+        self.assertEqual(len(rules), before + 1)
+        self.assertEqual(rules[-1]["replace_ids"], ["123456", "Image"])
+        self.assertEqual(rules[-1]["with_id"], 999999)
+        self.assertEqual(self.win.pages, [])
+
+    def test_edit_rule_page_shows_one_row_per_asset(self) -> None:
+        self.win.edit_rule(self.win.data["replacement_rules"][0])
+        self.wait_slide()
+        page = self.win.pages[-1]
+        self.assertEqual([r[2].get() for r in page.assets.rows], ["6444884337", "6444884785"])
+
+    def test_rule_page_local_file_portable(self) -> None:
         pack = self.win.store.folder / "Pack"
         pack.mkdir()
         (pack / "sky.png").write_bytes(b"png")
-        dlg.name.var.set("Local sky")
-        dlg.targets.var.set("123456 Image")
-        dlg.mode.set("local")
-        dlg._mode_changed("local")
-        dlg.value.var.set(str(pack / "sky.png"))
-        dlg._save()
-        self.assertEqual(dlg.result["local_path"], "/Pack/sky.png")
-        self.assertEqual(dlg.result["replace_ids"], ["123456", "Image"])
+        self.win.add_rule()
+        self.wait_slide()
+        page = self.win.pages[-1]
+        page.name.var.set("Local sky")
+        page.assets.rows[0][2].var.set("123456")
+        page.mode.set("local")
+        page._mode_changed("local")
+        page.value.var.set(str(pack / "sky.png"))
+        page.primary()
+        self.wait_slide()
+        self.assertEqual(self.saved()["replacement_rules"][-1]["local_path"], "/Pack/sky.png")
 
     def test_resize_and_rapid_hover(self) -> None:
         for size in ("1000x700", "1400x900", "960x640", "1140x800"):
@@ -179,10 +244,22 @@ class GuiTests(unittest.TestCase):
         self.win.store.create(self.name)
         self.win.selected = ""
         self.win.select_config(self.name)
-        self.gui.ConfirmDialog.show = lambda self: setattr(self, "result", True)  # type: ignore[method-assign]
         self.win.delete_config()
+        self.wait_slide()
+        self.win.pages[-1].primary()
+        self.wait_slide()
         self.assertEqual(self.win.store.names(), ["Default"])
         self.assertEqual(self.win.selected, "Default")
+
+    def test_new_config_page(self) -> None:
+        self.win.new_config()
+        self.wait_slide()
+        page = self.win.pages[-1]
+        page.field.var.set("Skies")
+        self.root.event_generate("<Return>")
+        self.wait_slide()
+        self.assertIn("Skies", self.win.store.names())
+        self.assertEqual(self.win.selected, "Skies")
 
 
 if __name__ == "__main__":

@@ -64,114 +64,151 @@ def count_rules(entries: list) -> tuple[int, int]:
     return total, on
 
 
-# ---------------------------------------------------------------- dialogs --
-class Dialog(tk.Toplevel):
-    def __init__(self, parent: tk.Misc, title: str, width: int = 460) -> None:
-        super().__init__(parent)
-        self.withdraw()
-        self.title(title)
-        self.configure(bg=T.SURFACE)
-        self.resizable(False, False)
-        self.transient(parent.winfo_toplevel())
-        self.body = tk.Frame(self, bg=T.SURFACE, padx=T.S(26), pady=T.S(24))
-        self.body.pack(fill="both", expand=True)
-        self._width = T.S(width)
-        label(self.body, title, 15, "bold").pack(anchor="w", pady=(0, T.S(16)))
-        self.bind("<Escape>", lambda _e: self.destroy())
-        self._jobs: list[str] = []
+# ------------------------------------------------------------------ pages --
+class Page(tk.Frame):
+    """A full-window view that slides in over the previous one (no pop-up windows)."""
 
-    def later(self, ms: int, fn: Callable[[], None]) -> None:
-        self._jobs.append(self.after(ms, fn))
+    def __init__(self, win: "MainWindow", title: str) -> None:
+        super().__init__(win.stage, bg=T.BG)
+        self.win = win
+        head = tk.Frame(self, bg=T.BG, padx=T.S(20), pady=T.S(16))
+        head.pack(fill="x")
+        IconButton(head, "back", self.close, kind="ghost", size=38, icon_size=18).pack(side="left")
+        label(head, title, 16, "bold").pack(side="left", padx=T.S(14))
+        self.scroll = ScrollArea(self, T.BG)
+        self.scroll.pack(fill="both", expand=True, padx=T.S(20), pady=(0, T.S(16)))
+        column = tk.Frame(self.scroll.inner, bg=T.BG)
+        column.pack(fill="x")
+        self.card = Card(column, fill=T.SURFACE, radius=22, pad=26)
+        self.card.pack(pady=(T.S(4), T.S(4)))
+        self.body = self.card.body
+        self.first_focus: tk.Widget | None = None
 
-    def destroy(self) -> None:
-        for job in self._jobs:
-            try:
-                self.after_cancel(job)
-            except tk.TclError:
-                pass
-        self._jobs.clear()
-        super().destroy()
+    def close(self) -> None:
+        self.win.pop_page()
 
-    def show(self) -> None:
-        self.update_idletasks()
-        top = self.master.winfo_toplevel()
-        w = max(self._width, self.winfo_reqwidth())
-        h = self.winfo_reqheight()
-        x = top.winfo_rootx() + (top.winfo_width() - w) // 2
-        y = top.winfo_rooty() + (top.winfo_height() - h) // 3
-        self.geometry(f"{w}x{h}+{max(0, x)}+{max(0, y)}")
-        self.deiconify()
-        self.grab_set()
-        self.focus_set()
-        self.wait_window()
+    def primary(self) -> None:
+        """Action for the Return key."""
+
+    def field_label(self, text: str, parent: tk.Misc | None = None, top: int = 14) -> tk.Label:
+        lab = label(parent or self.body, text, 9, "bold", T.MUTED)
+        lab.pack(anchor="w", pady=(T.S(top), T.S(6)))
+        return lab
 
     def buttons(self, ok_text: str, on_ok: Callable[[], None], kind: str = "primary") -> None:
         row = tk.Frame(self.body, bg=T.SURFACE)
-        row.pack(fill="x", pady=(T.S(22), 0))
+        row.pack(fill="x", pady=(T.S(24), 0))
         Button(row, ok_text, on_ok, kind=kind).pack(side="right")
-        Button(row, "Cancel", self.destroy, kind="ghost").pack(side="right", padx=T.S(8))
-        self.bind("<Return>", lambda _e: on_ok())
-
-    def field_label(self, text: str, parent: tk.Misc | None = None) -> tk.Label:
-        lab = label(parent or self.body, text, 9, "bold", T.MUTED)
-        lab.pack(anchor="w", pady=(T.S(12), T.S(6)))
-        return lab
+        Button(row, "Cancel", self.close, kind="ghost").pack(side="right", padx=T.S(8))
 
 
-class PromptDialog(Dialog):
-    def __init__(self, parent: tk.Misc, title: str, value: str = "", ok: str = "Save") -> None:
-        super().__init__(parent, title, width=420)
-        self.result: str | None = None
-        self.field = Field(self.body, value, "Name", width=368)
+class PromptPage(Page):
+    def __init__(self, win: "MainWindow", title: str, on_ok: Callable[[str], None], value: str = "",
+                 ok: str = "Save") -> None:
+        super().__init__(win, title)
+        self.on_ok = on_ok
+        self.field_label("Name", top=0)
+        self.field = Field(self.body, value, width=420)
         self.field.pack(fill="x")
-        self.buttons(ok, self._ok)
-        self.later(60, self._focus)
+        self.first_focus = self.field.entry
+        self.buttons(ok, self.primary)
 
-    def _focus(self) -> None:
-        self.field.entry.focus_set()
-        self.field.entry.select_range(0, "end")
-
-    def _ok(self) -> None:
-        if self.field.get().strip():
-            self.result = self.field.get().strip()
-            self.destroy()
+    def primary(self) -> None:
+        text = self.field.get().strip()
+        if text:
+            self.close()
+            self.on_ok(text)
 
 
-class ConfirmDialog(Dialog):
-    def __init__(self, parent: tk.Misc, title: str, message: str, ok: str = "Delete") -> None:
-        super().__init__(parent, title, width=420)
-        self.result = False
-        label(self.body, message, 10, color=T.MUTED, justify="left", wraplength=T.S(368)).pack(anchor="w")
-        self.buttons(ok, self._ok, kind="danger")
+class ConfirmPage(Page):
+    def __init__(self, win: "MainWindow", title: str, message: str, on_confirm: Callable[[], None],
+                 ok: str = "Delete") -> None:
+        super().__init__(win, title)
+        self.on_confirm = on_confirm
+        label(self.body, message, 10, color=T.MUTED, justify="left", wraplength=T.S(420)).pack(anchor="w")
+        tk.Frame(self.body, bg=T.SURFACE, width=T.S(420), height=1).pack()
+        self.buttons(ok, self.primary, kind="danger")
 
-    def _ok(self) -> None:
-        self.result = True
-        self.destroy()
+    def primary(self) -> None:
+        self.close()
+        self.on_confirm()
 
 
-class RuleDialog(Dialog):
+class AssetList(tk.Frame):
+    """One field per asset. "Add asset" appends Asset 2, Asset 3, ..."""
+
+    def __init__(self, parent: tk.Misc, values: list[str], width: int) -> None:
+        super().__init__(parent, bg=parent.cget("bg"))
+        self.width = width
+        self.rows: list[tuple[tk.Frame, tk.Label, Field, IconButton]] = []
+        self.box = tk.Frame(self, bg=self.cget("bg"))
+        self.box.pack(fill="x")
+        Button(self, "Add asset", self.add, kind="ghost", icon="plus", height=34, size=9).pack(
+            anchor="w", pady=(T.S(2), 0))
+        for value in values or [""]:
+            self.add(value, focus=False)
+
+    def add(self, value: str = "", focus: bool = True) -> Field:
+        bg = self.cget("bg")
+        row = tk.Frame(self.box, bg=bg)
+        row.pack(fill="x", pady=(0, T.S(8)))
+        name = label(row, "", 9, "bold", T.FAINT, width=7, anchor="w")
+        name.pack(side="left")
+        field = Field(row, value, "ID or type", width=self.width - 120)
+        field.pack(side="left", fill="x", expand=True)
+        remove = IconButton(row, "close", lambda: self.remove(row), kind="subtle", size=34, icon_size=14)
+        self.rows.append((row, name, field, remove))
+        self._renumber()
+        if focus:
+            field.entry.focus_set()
+            self.event_generate("<<AssetAdded>>")
+        return field
+
+    def remove(self, row: tk.Frame) -> None:
+        if len(self.rows) <= 1:
+            return
+        self.rows = [r for r in self.rows if r[0] is not row]
+        row.destroy()
+        self._renumber()
+
+    def _renumber(self) -> None:
+        many = len(self.rows) > 1
+        for i, (_row, name, _field, remove) in enumerate(self.rows, start=1):
+            name.configure(text=f"Asset {i}")
+            if many and not remove.winfo_manager():
+                remove.pack(side="left", padx=(T.S(6), 0))
+            elif not many and remove.winfo_manager():
+                remove.pack_forget()
+
+    def values(self) -> list[tuple[int, str]]:
+        return [(i, f.get().strip()) for i, (_r, _n, f, _b) in enumerate(self.rows, start=1)]
+
+
+class RulePage(Page):
     MODES = [("id", "Replace"), ("remove", "Remove"), ("local", "Local file")]
 
-    def __init__(self, parent: tk.Misc, rule: dict | None, configs_folder: Path) -> None:
-        super().__init__(parent, "Edit rule" if rule else "New rule", width=520)
+    def __init__(self, win: "MainWindow", rule: dict | None, on_save: Callable[[dict], None]) -> None:
+        super().__init__(win, "Edit rule" if rule else "New rule")
         self.rule = rule
-        self.configs_folder = configs_folder
-        self.result: dict | None = None
+        self.on_save = on_save
+        self.configs_folder = win.store.folder
         rule = rule or {}
         mode = rule_mode(rule) if rule else "id"
+        width = 480
 
-        self.field_label("Name")
-        self.name = Field(self.body, str(rule.get("name", "")), width=468)
+        self.field_label("Name", top=0)
+        self.name = Field(self.body, str(rule.get("name", "")), width=width)
         self.name.pack(fill="x")
+        self.first_focus = self.name.entry
 
         self.field_label("Assets")
-        targets = " ".join(str(t) for t in rule.get("replace_ids", []) or [])
-        self.targets = Field(self.body, targets, "Asset IDs or types", width=468)
-        self.targets.pack(fill="x")
+        self.assets = AssetList(self.body, [str(t) for t in rule.get("replace_ids", []) or []], width)
+        self.assets.pack(fill="x")
+        self.assets.bind("<<AssetAdded>>", lambda _e: self.after_idle(self._reveal_last_asset))
 
         self.field_label("Action")
         self.mode = Segmented(self.body, self.MODES, mode if mode != "cdn" else "remove", self._mode_changed,
-                              width=468)
+                              width=width)
         self.mode.pack(anchor="w")
         if mode == "cdn":
             label(self.body, "CDN rules are not supported.", 9, color=T.WARN).pack(anchor="w", pady=(T.S(8), 0))
@@ -186,23 +223,28 @@ class RuleDialog(Dialog):
             start = str(rule.get("with_id"))
         elif mode == "local":
             start = str(rule.get("local_path") or "")
-        self.value = Field(row, start, width=360)
+        self.value = Field(row, start, width=width - 110)
         self.value.pack(side="left", fill="x", expand=True)
         self.browse = Button(row, "Browse", self._browse, kind="ghost", height=40)
-        self._browse_shown = False
 
         self.anchor = tk.Frame(self.body, bg=T.SURFACE)
         self.anchor.pack(fill="x")
         en = tk.Frame(self.anchor, bg=T.SURFACE)
-        en.pack(fill="x", pady=(T.S(18), 0))
+        en.pack(fill="x", pady=(T.S(20), 0))
         self.enabled = Toggle(en, bool(rule.get("enabled", True)))
         self.enabled.pack(side="left")
         label(en, "Enabled", 10).pack(side="left", padx=T.S(10))
         self.error = label(self.anchor, "", 9, color=T.DANGER, wraplength=T.S(460), justify="left")
         self.error.pack(anchor="w", pady=(T.S(10), 0))
-        self.buttons("Save", self._save)
+        self.buttons("Save", self.primary)
         self._mode_changed(self.mode.value)
-        self.later(60, self.name.entry.focus_set)
+
+    def _reveal_last_asset(self) -> None:
+        field = self.assets.rows[-1][2]
+        y = field.winfo_rooty() - self.scroll.inner.winfo_rooty()
+        view = self.scroll.canvas.winfo_height()
+        if y + field.winfo_height() > self.scroll.pos + view - T.S(80):
+            self.scroll.scroll_by(y + field.winfo_height() - (self.scroll.pos + view) + T.S(120))
 
     def _mode_changed(self, mode: str) -> None:
         if mode == "remove":
@@ -210,27 +252,36 @@ class RuleDialog(Dialog):
         else:
             self.value_box.pack(fill="x", before=self.anchor)
             self.value_label.configure(text="File" if mode == "local" else "Replacement asset ID")
-        if mode == "local" and not self._browse_shown:
+        if mode == "local" and not self.browse.winfo_manager():
             self.browse.pack(side="left", padx=(T.S(8), 0))
-            self._browse_shown = True
-        elif mode != "local" and self._browse_shown:
+        elif mode != "local" and self.browse.winfo_manager():
             self.browse.pack_forget()
-            self._browse_shown = False
         self.error.configure(text="")
-        if self.winfo_viewable():
-            self.update_idletasks()
-            self.geometry(f"{self.winfo_width()}x{self.winfo_reqheight()}")
 
     def _browse(self) -> None:
-        path = filedialog.askopenfilename(parent=self, title="Choose file")
+        path = filedialog.askopenfilename(parent=self.win.root, title="Choose file")
         if path:
             self.value.var.set(path)
 
-    def _save(self) -> None:
+    def collect_targets(self) -> list[str]:
+        targets: list[str] = []
+        for index, text in self.assets.values():
+            if not text:
+                continue
+            try:
+                tokens = parse_target_text(text)
+            except ValueError as exc:
+                raise ValueError(f"Asset {index}: {exc}") from None
+            for token in tokens:
+                if token not in targets:
+                    targets.append(token)
+        if not targets:
+            raise ValueError("Enter at least one asset ID or type.")
+        return targets
+
+    def primary(self) -> None:
         try:
-            targets = parse_target_text(self.targets.get())
-            if not targets:
-                raise ValueError("Enter at least one asset ID or type.")
+            targets = self.collect_targets()
             mode = self.mode.value
             value = self.value.get().strip()
             if mode == "id" and not (value.isdigit() and int(value) > 80):
@@ -259,16 +310,17 @@ class RuleDialog(Dialog):
             rule["with_id"] = int(value)
         elif mode == "local":
             rule["local_path"] = value
-        self.result = rule
-        self.destroy()
+        self.close()
+        self.on_save(rule)
 
 
-class SettingsDialog(Dialog):
-    def __init__(self, parent: tk.Misc, ctl: Controller) -> None:
-        super().__init__(parent, "Settings", width=480)
+class SettingsPage(Page):
+    def __init__(self, win: "MainWindow") -> None:
+        super().__init__(win, "Settings")
+        ctl = win.ctl
         self.ctl = ctl
         s = ctl.config.settings
-        self._row("Clear cache on launch", Toggle, s.clear_cache_on_launch, self._set_clear)
+        self._row("Clear cache on launch", Toggle, s.clear_cache_on_launch, self._set_clear, first=True)
         self._row("Reroute website launches", Toggle, s.auto_capture_launches, self._set_capture)
         port_body = self._row("Port", None, None, None)
         self.port = Field(port_body, str(s.port), width=96, height=34)
@@ -276,18 +328,15 @@ class SettingsDialog(Dialog):
         self.port.var.trace_add("write", lambda *_: self._set_port())
 
         row = tk.Frame(self.body, bg=T.SURFACE)
-        row.pack(fill="x", pady=(T.S(16), 0))
+        row.pack(fill="x", pady=(T.S(18), 0))
         Button(row, "Open data folder", lambda: open_path(ctl.config.root), kind="ghost").pack(side="left")
         Button(row, "Remove from Roblox", self._uninstall, kind="danger").pack(side="left", padx=T.S(8))
+        label(self.body, f"Version {__version__}", 9, color=T.FAINT).pack(anchor="w", pady=(T.S(22), 0))
 
-        foot = tk.Frame(self.body, bg=T.SURFACE)
-        foot.pack(fill="x", pady=(T.S(22), 0))
-        label(foot, f"Version {__version__}", 9, color=T.FAINT).pack(side="left")
-        Button(foot, "Done", self.destroy, kind="primary").pack(side="right")
-
-    def _row(self, title: str, widget, value, command) -> tk.Frame:
+    def _row(self, title: str, widget, value, command, first: bool = False) -> tk.Frame:
         card = Card(self.body, fill=T.CARD, radius=14, pad=14)
-        card.pack(fill="x", pady=T.S(4))
+        card.pack(fill="x", pady=(0 if first else T.S(8), 0))
+        tk.Frame(card.body, bg=T.CARD, width=T.S(400), height=1).pack(side="bottom")
         label(card.body, title, 10, "bold").pack(side="left")
         if widget is not None:
             widget(card.body, value, command).pack(side="right")
@@ -313,12 +362,10 @@ class SettingsDialog(Dialog):
             self.ctl.config.save()
 
     def _uninstall(self) -> None:
-        dlg = ConfirmDialog(self, "Remove from Roblox",
-                            "The Interceptium certificate and setting will be removed from all Roblox installs.",
-                            ok="Remove")
-        dlg.show()
-        if dlg.result:
-            threading.Thread(target=self.ctl.remove_from_roblox, daemon=True).start()
+        self.win.push_page(ConfirmPage(
+            self.win, "Remove from Roblox",
+            "The Interceptium certificate and setting will be removed from all Roblox installs.",
+            lambda: threading.Thread(target=self.ctl.remove_from_roblox, daemon=True).start(), ok="Remove"))
 
 
 # ------------------------------------------------------------ list items --
@@ -529,8 +576,13 @@ class MainWindow:
         self._set_icons()
         install_wheel(root)
 
-        shell = tk.Frame(root, bg=T.BG, padx=T.S(20), pady=T.S(16))
-        shell.pack(fill="both", expand=True)
+        self.stage = tk.Frame(root, bg=T.BG)
+        self.stage.pack(fill="both", expand=True)
+        shell = tk.Frame(self.stage, bg=T.BG, padx=T.S(20), pady=T.S(16))
+        shell.place(x=0, y=0, relwidth=1, relheight=1)
+        self.shell = shell
+        self.pages: list[Page] = []
+        self._sliding = False
         shell.columnconfigure(1, weight=1)
         shell.rowconfigure(1, weight=1)
         self._build_header(shell)
@@ -542,6 +594,8 @@ class MainWindow:
         self.refresh_rules()
         root.protocol("WM_DELETE_WINDOW", self.on_close)
         self.ui_calls: queue.Queue[Callable[[], None]] = queue.Queue()
+        root.bind("<Escape>", lambda _e: self.pop_page(), add="+")
+        root.bind("<Return>", self._on_return, add="+")
         self._pump_job: str | None = root.after(50, self._pump_log)
         log.emit("App", f"{APP_NAME} {__version__}")
 
@@ -645,6 +699,56 @@ class MainWindow:
             self.log_wrap.pack(fill="x", pady=(T.S(8), 0))
             self.log_toggle.set_text("Hide")
 
+    # -- page navigation -------------------------------------------------
+    SLIDE_TIME = 0.34
+
+    def push_page(self, page: Page) -> None:
+        if self._sliding:
+            page.destroy()
+            return
+        below = self.pages[-1] if self.pages else self.shell
+        self.pages.append(page)
+        self._slide(below, page, forward=True)
+
+    def pop_page(self) -> None:
+        if self._sliding or not self.pages:
+            return
+        page = self.pages.pop()
+        below = self.pages[-1] if self.pages else self.shell
+        self._slide(below, page, forward=False)
+
+    def _slide(self, below: tk.Frame, page: Page, forward: bool) -> None:
+        """Slide ``page`` in from the right (or back out), nudging ``below`` with a parallax offset."""
+        self._sliding = True
+        self.root.focus_set()
+        width = max(1, self.stage.winfo_width())
+        below.place(x=0 if forward else -int(width * 0.3), y=0, relwidth=1, relheight=1)
+        page.place(x=width if forward else 0, y=0, relwidth=1, relheight=1)
+        page.lift()
+
+        def step(v: float) -> None:
+            t = v if forward else 1.0 - v
+            below.place_configure(x=-int(width * 0.3 * t))
+            page.place_configure(x=int(width * (1.0 - t)))
+
+        def done() -> None:
+            self._sliding = False
+            if forward:
+                below.place_forget()
+                if page.first_focus is not None:
+                    page.first_focus.focus_set()
+            else:
+                page.destroy()
+                below.place_configure(x=0)
+                if below is self.shell:
+                    self.address.configure(text=self.ctl.proxy_url.removeprefix("http://"))
+
+        anim.get().tween((self, "slide"), self.SLIDE_TIME, step, ease=anim.ease_in_out, done=done)
+
+    def _on_return(self, _e: tk.Event) -> None:
+        if self.pages and not self._sliding:
+            self.pages[-1].primary()
+
     # -- background work -------------------------------------------------
     def _bg(self, fn: Callable[[], object], done: Callable[[], None] | None = None) -> None:
         """Run ``fn`` on a worker thread; ``done`` then runs on the UI thread."""
@@ -710,8 +814,7 @@ class MainWindow:
         self._bg(roblox.clear_cache)
 
     def open_settings(self) -> None:
-        SettingsDialog(self.root, self.ctl).show()
-        self.address.configure(text=self.ctl.proxy_url.removeprefix("http://"))
+        self.push_page(SettingsPage(self))
 
     # -- configs -----------------------------------------------------------
     def refresh_configs(self) -> None:
@@ -750,17 +853,17 @@ class MainWindow:
         log.emit("Configs", f"{name} {'enabled' if value else 'disabled'}")
 
     def new_config(self) -> None:
-        dlg = PromptDialog(self.root, "New config", ok="Create")
-        dlg.show()
-        if dlg.result:
+        def create(text: str) -> None:
             try:
-                name = self.store.create(dlg.result)
+                name = self.store.create(text)
             except ValueError as exc:
                 log.emit("Error", str(exc))
                 return
             self.store.set_enabled(name, True)
             self.selected = ""
             self.select_config(name)
+
+        self.push_page(PromptPage(self, "New config", create, ok="Create"))
 
     def import_config(self) -> None:
         paths = filedialog.askopenfilenames(parent=self.root, title="Import configs",
@@ -777,14 +880,16 @@ class MainWindow:
             self.select_config(last)
 
     def rename_config(self) -> None:
-        dlg = PromptDialog(self.root, "Rename config", self.selected)
-        dlg.show()
-        if dlg.result:
+        old = self.selected
+
+        def rename(text: str) -> None:
             try:
-                self.selected = self.store.rename(self.selected, dlg.result)
+                self.selected = self.store.rename(old, text)
             except (OSError, ValueError) as exc:
                 log.emit("Error", str(exc))
             self.refresh_configs()
+
+        self.push_page(PromptPage(self, "Rename config", rename, old))
 
     def export_config(self) -> None:
         dest = filedialog.asksaveasfilename(parent=self.root, title="Export config", defaultextension=".json",
@@ -797,16 +902,17 @@ class MainWindow:
                 log.emit("Error", str(exc))
 
     def delete_config(self) -> None:
-        dlg = ConfirmDialog(self.root, "Delete config", f'"{self.selected}" will be permanently deleted.')
-        dlg.show()
-        if not dlg.result:
-            return
-        self.store.delete(self.selected)
-        if not self.store.names():
-            self.store.create("Default")
-            self.store.set_enabled("Default", True)
-        self.selected = ""
-        self.select_config(self.store.names()[0])
+        name = self.selected
+
+        def delete() -> None:
+            self.store.delete(name)
+            if not self.store.names():
+                self.store.create("Default")
+                self.store.set_enabled("Default", True)
+            self.selected = ""
+            self.select_config(self.store.names()[0])
+
+        self.push_page(ConfirmPage(self, "Delete config", f'"{name}" will be permanently deleted.', delete))
 
     # -- rules ---------------------------------------------------------------
     def _save(self) -> None:
@@ -912,24 +1018,24 @@ class MainWindow:
                 child._layout()
 
     def add_rule(self) -> None:
-        dlg = RuleDialog(self.root, None, self.store.folder)
-        dlg.show()
-        if dlg.result:
-            self.data["replacement_rules"].append(dlg.result)
+        def save(rule: dict) -> None:
+            self.data["replacement_rules"].append(rule)
             self._save()
             self.search.var.set("")
             self.refresh_rules()
             self.refresh_configs()
             self.root.update_idletasks()
-            self.rule_list.scroll_by(self.rule_list._max())
-            log.emit("Rules", f"added {dlg.result['name']}")
+            self.rule_list.to(self.rule_list._max())
+            log.emit("Rules", f"added {rule['name']}")
+
+        self.push_page(RulePage(self, None, save))
 
     def edit_rule(self, rule: dict) -> None:
-        dlg = RuleDialog(self.root, rule, self.store.folder)
-        dlg.show()
-        if dlg.result:
+        def save(_rule: dict) -> None:
             self._save()
             self._keep_scroll(self.refresh_rules)
+
+        self.push_page(RulePage(self, rule, save))
 
     def delete_rule(self, rule: dict) -> None:
         for _d, _k, entry, parent in self._visible_items():
