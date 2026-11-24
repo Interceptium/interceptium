@@ -65,7 +65,7 @@ class GuiBase(unittest.TestCase):
         end = time.time() + seconds
         while time.time() < end:
             self.root.update()
-            time.sleep(0.005)
+            time.sleep(0.001)  # short, so frame timers aren't delayed by the test itself
 
     def click(self, widget, x: int, y: int) -> None:
         widget.event_generate("<Motion>", x=x, y=y)
@@ -163,7 +163,10 @@ class GuiTests(GuiBase):
         self.pump(0.05)
         self.assertGreater(page.opacity, 0.0)
         self.assertLess(page.opacity, 1.0)  # mid fade-in
-        self.pump(overlay.OPEN_TIME)
+        # rate while the open animation runs (the ticker rightly stops once it is finished)
+        while a.active((page, "show")) and time.perf_counter() - t0 < 2:
+            self.root.update()
+            time.sleep(0.001)
         fps = (a.frames - f0) / (time.perf_counter() - t0)
         self.assertGreater(fps, 50, f"open animation ran at {fps:.1f} fps")
         self.wait_slide()

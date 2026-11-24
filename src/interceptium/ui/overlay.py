@@ -106,6 +106,8 @@ class Popup(tk.Toplevel):
         self.closing = False
         self.first_focus: tk.Widget | None = None
         self._fit_job: str | None = None
+        self._placed_h = -1
+        self._placed_xy = (0, 0)
 
         corner_bg = KEY if sys.platform in ("win32", "darwin") else gfx.mix(T.BG, "#000000", 0.6)
         self.canvas = tk.Canvas(self, bg=corner_bg, highlightthickness=0, bd=0, width=self.W, height=self.h)
@@ -187,11 +189,17 @@ class Popup(tk.Toplevel):
         anim.get().tween((self, "size"), RESIZE_TIME, step, ease=anim.ease_out)
 
     def place_window(self) -> None:
+        """Position (and size) the pop-up; only what actually changed is sent to the window system."""
         root = self.host.root
+        h = int(self.h)
         x = root.winfo_rootx() + (root.winfo_width() - self.W) // 2
         y = root.winfo_rooty() + int((root.winfo_height() - self.h) / 2 + self.offset)
-        self.geometry(f"{self.W}x{int(self.h)}+{x}+{y}")
-        self._layout_shape()
+        if h != self._placed_h:
+            self.geometry(f"{self.W}x{h}+{x}+{y}")
+            self._layout_shape()
+        elif (x, y) != self._placed_xy:
+            self.geometry(f"+{x}+{y}")
+        self._placed_h, self._placed_xy = h, (x, y)
 
     # -- open / close ----------------------------------------------------------
     def open(self) -> None:

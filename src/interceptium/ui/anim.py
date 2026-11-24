@@ -33,6 +33,7 @@ class Animator:
                                          Callable[[], None] | None]] = {}
         self._loops: dict[object, Callable[[float], None]] = {}
         self._job: str | None = None
+        self._deadline = 0.0
         self.frames = 0
 
     def tween(self, key: object, duration: float, fn: Callable[[float], None],
@@ -91,9 +92,16 @@ class Animator:
                 self._loops.pop(key, None)
         self.frames += 1
         if self._tweens or self._loops:
-            spent = time.perf_counter() - start
-            delay = max(1, int((FRAME - spent) * 1000))
+            # Aim at fixed frame deadlines (not "16 ms after this frame"), so time Tk spends redrawing
+            # between frames doesn't add up and drag the rate below 60 fps.
+            now = time.perf_counter()
+            self._deadline = (self._deadline or start) + FRAME
+            if self._deadline < now - FRAME:  # fell far behind (busy UI): don't try to catch up in a burst
+                self._deadline = now + FRAME
+            delay = max(1, int(round((self._deadline - now) * 1000)))
             self._job = self.root.after(delay, self._tick)
+        else:
+            self._deadline = 0.0
 
 
 _animator: Animator | None = None
