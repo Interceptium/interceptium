@@ -33,6 +33,7 @@ def main() -> int:
         "--windowed",
         "--noconfirm",
         "--clean",
+        "--noupx",  # packed executables are a common antivirus false-positive trigger
         "--paths", str(ROOT / "src"),
         "--paths", str(HERE),
         "--add-data", f"{payload}:payload",
