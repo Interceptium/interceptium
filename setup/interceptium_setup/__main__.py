@@ -68,7 +68,7 @@ def relaunch_from_temp(ops, argv: list[str]) -> bool:
             return False
     except OSError:
         return False
-    temp = Path(tempfile.gettempdir()) / f"interceptium-setup-{os.getpid()}.exe"
+    temp = Path(tempfile.gettempdir()) / f"interceptium-setup-{os.getpid()}.exe"  # see winops.TEMP_COPY_PREFIX
     shutil.copyfile(exe, temp)
     subprocess.Popen([str(temp), *argv, "--from-temp"], close_fds=True, stdin=subprocess.DEVNULL,
                      stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -146,6 +146,10 @@ def main(argv: list[str] | None = None) -> int:
     args = parse(argv)
     log = Log(args.log)
     log(f"start {' '.join(argv)}")
+    if sys.platform == "win32":
+        from .winops import clean_old_temp_copies
+
+        clean_old_temp_copies(setup_path())
     try:
         ops = make_ops()
         if relaunch_from_temp(ops, argv):
@@ -178,10 +182,7 @@ def main(argv: list[str] | None = None) -> int:
             mode = "install"
         return run_ui(installer, mode, args)
     finally:
-        if args.from_temp and setup_path() is not None:
-            from .winops import schedule_self_delete
-
-            schedule_self_delete(setup_path())
+        log("exit")
 
 
 if __name__ == "__main__":

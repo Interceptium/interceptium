@@ -185,5 +185,24 @@ class EntryPointTests(Fixture):
         self.assertEqual(entry.run_quiet(bad, entry.parse(["--quiet", "--log", str(log)])), 1)
         self.assertIn("failed: This setup file is incomplete", log.read_text())
 
+
+class TempCopyCleanupTests(unittest.TestCase):
+    def test_old_temp_copies_are_removed_but_not_the_running_one(self) -> None:
+        import tempfile as tf
+        from unittest import mock
+
+        from interceptium_setup import winops
+
+        with tf.TemporaryDirectory() as tmp, mock.patch.object(tf, "gettempdir", return_value=tmp):
+            old = Path(tmp) / "interceptium-setup-111.exe"
+            current = Path(tmp) / "interceptium-setup-222.exe"
+            other = Path(tmp) / "something-else.exe"
+            for f in (old, current, other):
+                f.write_bytes(b"x")
+            winops.clean_old_temp_copies(current)
+            self.assertFalse(old.exists())
+            self.assertTrue(current.exists())
+            self.assertTrue(other.exists())
+
 if __name__ == "__main__":
     unittest.main()

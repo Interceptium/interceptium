@@ -86,8 +86,7 @@ class WindowsOps:
             "INTERCEPTIUM_WORKDIR": str(target.parent),
             "INTERCEPTIUM_ICON": str(icon),
         })
-        _run(["powershell.exe", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
-              "-Command", _SHORTCUT_PS], env=env)
+        _run(["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", _SHORTCUT_PS], env=env)
 
     def write_uninstall_entry(self, values: dict[str, object]) -> None:
         import winreg
@@ -129,14 +128,21 @@ class WindowsOps:
             pass
 
 
-def schedule_self_delete(path: Path) -> None:
-    """Delete a temporary copy of the setup a few seconds after it exits."""
-    if sys.platform != "win32":
-        return
-    cmd = f'ping 127.0.0.1 -n 5 > nul & del /f /q "{path}"'
-    try:
-        subprocess.Popen(["cmd.exe", "/c", cmd], close_fds=True, stdin=subprocess.DEVNULL,
-                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                         creationflags=CREATE_NO_WINDOW | DETACHED_PROCESS)
-    except OSError:
-        pass
+TEMP_COPY_PREFIX = "interceptium-setup-"
+
+
+def clean_old_temp_copies(current: Path | None) -> None:
+    """Remove temporary setup copies left by earlier repair/uninstall runs.
+
+    (A running program can't delete itself, so the copy used last time is
+    tidied up here, on the next run, instead of with a self-delete trick.)
+    """
+    import tempfile
+
+    for old in Path(tempfile.gettempdir()).glob(TEMP_COPY_PREFIX + "*.exe"):
+        if current is not None and old.resolve() == current.resolve():
+            continue
+        try:
+            old.unlink()
+        except OSError:
+            pass  # still running or locked: next time
