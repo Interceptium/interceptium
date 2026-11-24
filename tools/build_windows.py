@@ -77,7 +77,9 @@ def check_signatures(files: list[Path]) -> None:
         "  Write-Host ('  signed by PSF: ' + (Split-Path $f -Leaf)) }"
     )
     env = dict(os.environ, CHECK_FILES="|".join(str(f) for f in files))
-    run(["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script], env=env)
+    env.pop("PSModulePath", None)  # PowerShell 7's module path breaks Windows PowerShell's own modules
+    run(["powershell.exe", "-NoProfile", "-NonInteractive", "-Command",
+         "Import-Module Microsoft.PowerShell.Security; " + script], env=env)
 
 
 def build_runtime() -> None:

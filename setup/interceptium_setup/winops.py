@@ -80,6 +80,7 @@ class WindowsOps:
     def create_shortcut(self, link: Path, target: Path, icon: Path) -> None:
         link.parent.mkdir(parents=True, exist_ok=True)
         env = dict(os.environ)
+        env.pop("PSModulePath", None)  # a PowerShell 7 module path can break Windows PowerShell's modules
         env.update({
             "INTERCEPTIUM_LNK": str(link),
             "INTERCEPTIUM_TARGET": str(target),
