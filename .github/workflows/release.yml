@@ -13,6 +13,10 @@ on:
         description: "Release to (re)publish; an existing release with this tag is deleted first"
         required: false
         default: "v1.0.0"
+      reuse_run:
+        description: "Optional: publish the exact files built (and scanned) by this earlier run ID instead of rebuilding"
+        required: false
+        default: ""
 
 permissions:
   contents: read
@@ -44,6 +48,7 @@ jobs:
           xvfb-run -a -s "-screen 0 1400x900x24" python -m unittest tests.test_gui -v
 
   windows-setup:
+    if: github.event_name != 'workflow_dispatch' || inputs.reuse_run == ''
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -149,6 +154,7 @@ jobs:
           if-no-files-found: error
 
   sources:
+    if: github.event_name != 'workflow_dispatch' || inputs.reuse_run == ''
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -164,17 +170,22 @@ jobs:
           if-no-files-found: error
 
   release:
-    if: github.event_name == 'workflow_dispatch' && inputs.version != ''
+    if: >-
+      always() && github.event_name == 'workflow_dispatch' && inputs.version != '' &&
+      (inputs.reuse_run != '' || (needs.windows-setup.result == 'success' && needs.sources.result == 'success'))
     needs: [windows-setup, sources]  # tests already run on every push; no need to wait for a free Mac
     runs-on: ubuntu-latest
     permissions:
       contents: write  # only this job may change releases
+      actions: read    # to fetch files from an earlier run when reuse_run is set
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
           path: out
           merge-multiple: true
+          run-id: ${{ inputs.reuse_run || github.run_id }}
+          github-token: ${{ github.token }}
       - name: Checksums
         working-directory: out
         run: sha256sum * > SHA256SUMS.txt && cat SHA256SUMS.txt
