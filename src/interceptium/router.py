@@ -23,34 +23,14 @@ import time
 from pathlib import Path
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
-from .config import Rule
 from .logbus import log
+from .rules import RuleSet, type_of_entry
 
 ASSET_HOST = "assetdelivery.roblox.com"
 CDN_HOSTS = frozenset({"fts.rbxcdn.com", "contentdelivery.roblox.com"})
 INTERCEPT_HOSTS = frozenset({ASSET_HOST, *CDN_HOSTS})
 BATCH_PATH = "/v1/assets/batch"
 ROUTE_TTL = 600.0  # seconds a learned CDN URL -> local file route is kept
-
-
-class RuleSet:
-    """Compiled view of the enabled rules (built once per request)."""
-
-    def __init__(self, rules: list[Rule]) -> None:
-        self.replace: dict[int, int] = {}
-        self.remove: set[int] = set()
-        self.files: dict[int, str] = {}
-        for rule in rules:
-            for asset in rule.assets:
-                if rule.action == "replace":
-                    self.replace[asset] = int(rule.value)
-                elif rule.action == "remove":
-                    self.remove.add(asset)
-                elif rule.action == "file":
-                    self.files[asset] = rule.value
-
-    def __bool__(self) -> bool:
-        return bool(self.replace or self.remove or self.files)
 
 
 def _as_id(value: object) -> int | None:
@@ -105,22 +85,24 @@ class AssetRouter:
                 kept.append(entry)
                 continue
             asset = _as_id(entry.get("assetId"))
-            if asset is None:
+            hit = rules.lookup(asset, type_of_entry(entry))
+            if hit is None:
                 kept.append(entry)
                 continue
-            if asset in rules.remove:
+            action, value = hit
+            if action == "remove":
                 log.emit("Remove", f"asset {asset} removed")
                 changed = True
                 continue
-            if asset in rules.files:
+            if action == "file":
                 req_id = str(entry.get("requestId", ""))
                 if req_id:
                     with self._lock:
-                        self._pending[req_id] = (rules.files[asset], now)
-                    log.emit("File", f"asset {asset} will be served from {Path(rules.files[asset]).name}")
-            elif asset in rules.replace:
-                entry["assetId"] = rules.replace[asset]
-                log.emit("Replace", f"asset {asset} -> {rules.replace[asset]}")
+                        self._pending[req_id] = (str(value), now)
+                    log.emit("File", f"asset {asset} will be served from {Path(str(value)).name}")
+            elif action == "replace" and value != asset:
+                entry["assetId"] = value
+                log.emit("Replace", f"asset {asset} -> {value}")
                 changed = True
             kept.append(entry)
         if not changed:
@@ -180,17 +162,19 @@ class AssetRouter:
             if key.lower() not in ("id", "assetid"):
                 continue
             asset = _as_id(value)
-            if asset is None:
+            hit = rules.lookup(asset)
+            if asset is None or hit is None:
                 continue
-            if asset in rules.remove:
+            action, new_value = hit
+            if action == "remove":
                 log.emit("Remove", f"asset {asset} removed")
                 return "remove", target, None
-            if asset in rules.files:
-                log.emit("File", f"asset {asset} served from {Path(rules.files[asset]).name}")
-                return "file", target, rules.files[asset]
-            if asset in rules.replace:
-                query[index] = (key, str(rules.replace[asset]))
-                log.emit("Replace", f"asset {asset} -> {rules.replace[asset]}")
+            if action == "file":
+                log.emit("File", f"asset {asset} served from {Path(str(new_value)).name}")
+                return "file", target, str(new_value)
+            if action == "replace":
+                query[index] = (key, str(new_value))
+                log.emit("Replace", f"asset {asset} -> {new_value}")
                 new = urlunsplit(("", "", parts.path, urlencode(query), parts.fragment))
                 return "replace", new, None
         return "pass", target, None

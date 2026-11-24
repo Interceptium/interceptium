@@ -44,15 +44,40 @@ repository's source (see `.github/workflows/release.yml`).
 ## How to use
 
 1. Open Interceptium.
-2. Click **Add** and create a rule:
-   - **Asset IDs:** the asset(s) you want to change, for example `1234567 2345678`.
-   - **Action:** *Replace with asset ID*, *Remove asset* or *Use local file*.
-3. Click **Start proxy**.
-4. Click **Launch Roblox**, or just join a game from the website. With *Route Roblox started from the
-   website through the proxy* turned on, Interceptium closes that Roblox window and reopens it through
-   the proxy straight away.
-5. Roblox caches assets, so **clear the Roblox cache** after changing rules. *Clear cache when launching
-   Roblox* does this for you.
+2. In **Configs** (left), pick a config or press **+** to make one. Every config with its switch **on** runs, so you can mix packs.
+3. Press **+ Add rule**:
+   - **Assets to change:** asset IDs or asset types, for example `1234567 2345678` or `Image`.
+   - **Action:** *Replace* (with another asset ID), *Remove*, or *Local file*.
+4. Press the big round **power button** to start the proxy.
+5. Press **Launch Roblox**, or join a game from the website. With *Reroute website launches* on (in Settings), Interceptium restarts that Roblox window through the proxy.
+6. Roblox caches assets, so **clear the Roblox cache** after changing rules. *Clear cache when launching* does this for you.
+
+## Configs and Fleasion compatibility
+
+Interceptium uses the same JSON format as Fleasion, so you can import Fleasion configs directly with the **↓** button, or by
+dropping them into the configs folder (the **⋯** button opens it).
+
+```json
+{"replacement_rules": [
+  {"name": "Purple sky", "enabled": true, "replace_ids": ["6444884337", "6444884785"], "mode": "id", "with_id": 1012890},
+  {"name": "No textures", "replace_ids": ["Image"], "mode": "remove"},
+  {"type": "group", "name": "Sounds", "children": [
+    {"name": "Gunshot", "replace_ids": ["130113322"], "mode": "local", "local_path": "/Sounds/shot.ogg"}
+  ]}
+]}
+```
+
+| Field | Meaning |
+|---|---|
+| `replace_ids` | Asset IDs, or asset type names (`Image`, `Audio`, `Mesh`, `Animation`, …) |
+| `mode` | `id` replace with `with_id` · `remove` · `local` serve `local_path` |
+| `local_path` | A normal path, or `/Folder/file` relative to the configs folder (portable packs) |
+| groups | `{"type": "group", "children": [...]}` show as sections |
+
+Which configs run is stored as `enabled_configs` in `settings.json`. Unknown keys in config files are kept when Interceptium saves.
+
+**Not supported on purpose:** `cdn` rules (`cdn_url`) would make Roblox download from third-party servers. They show up as
+*CDN URL (disabled)* and are skipped. TexturePack slot keys (`123:1`) are ignored.
 
 ### What happens to Roblox when you start the proxy
 
@@ -74,7 +99,7 @@ Interceptium --clear-cache        delete Roblox's asset cache and exit
 Interceptium --uninstall          remove Interceptium's certificate from Roblox and exit
 ```
 
-Settings and rules are stored as JSON in `%LOCALAPPDATA%\Interceptium` (Windows),
+Settings (`settings.json`) and configs (`configs/*.json`) are stored in `%LOCALAPPDATA%\Interceptium` (Windows),
 `~/Library/Application Support/Interceptium` (macOS) or `~/.local/share/interceptium` (Linux).
 
 ## Run from source / build

@@ -85,6 +85,8 @@ def main() -> None:
     else:
         png = png_bytes(256, 256, draw())
         (ASSETS / "logo.png").write_bytes(png)
+        for size in (48, 96):
+            (ASSETS / f"logo_{size}.png").write_bytes(png_bytes(size, size, draw(size, 4)))
     (ASSETS / "logo.ico").write_bytes(ico_bytes(png))
     print("wrote", ASSETS)
 

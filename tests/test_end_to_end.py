@@ -15,7 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from interceptium import http1  # noqa: E402
 from interceptium.certs import CertAuthority  # noqa: E402
-from interceptium.config import ConfigStore, Rule  # noqa: E402
+from interceptium.config import ConfigStore  # noqa: E402
 from interceptium.proxy import ProxyServer  # noqa: E402
 
 CDN_BYTES = b"ORIGINAL-ASSET-BYTES"
@@ -111,12 +111,16 @@ class EndToEnd(unittest.IsolatedAsyncioTestCase):
 
         self.local_file = tmp / "replacement.bin"
         self.local_file.write_bytes(b"MY-LOCAL-FILE")
-        self.config = ConfigStore(tmp / "config.json")
-        self.config.set_rules([
-            Rule(name="swap", assets=[111], action="replace", value="999"),
-            Rule(name="drop", assets=[222], action="remove"),
-            Rule(name="file", assets=[333], action="file", value=str(self.local_file)),
-        ])
+        self.config = ConfigStore(tmp / "data")
+        # Fleasion-format config, with a group and a disabled rule
+        self.config.save_config("Default", {"replacement_rules": [
+            {"name": "swap", "replace_ids": ["111"], "mode": "id", "with_id": 999},
+            {"type": "group", "name": "Folder", "children": [
+                {"name": "drop", "replace_ids": [222], "mode": "remove"},
+                {"name": "file", "replace_ids": ["333"], "mode": "local", "local_path": str(self.local_file)},
+            ]},
+            {"name": "off", "enabled": False, "replace_ids": ["444"], "mode": "remove"},
+        ]})
         self.ca = CertAuthority(tmp / "ca")
         upstream_ctx = ssl.create_default_context(cadata=self.upstream_ca.ca_pem())
         self.proxy = ProxyServer(

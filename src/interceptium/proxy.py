@@ -22,7 +22,7 @@ from .certs import CertAuthority
 from .config import ConfigStore
 from .http1 import Message, ProtocolError
 from .logbus import log
-from .router import ASSET_HOST, BATCH_PATH, CDN_HOSTS, INTERCEPT_HOSTS, AssetRouter, RuleSet, read_local_file
+from .router import ASSET_HOST, BATCH_PATH, CDN_HOSTS, INTERCEPT_HOSTS, AssetRouter, read_local_file
 
 LISTEN_HOST = "127.0.0.1"
 CONNECT_TIMEOUT = 15.0
@@ -225,7 +225,7 @@ class ProxyServer:
                     writer.write(b"HTTP/1.1 100 Continue\r\n\r\n")
                     await writer.drain()
                 body = await http1.read_body(reader, req)
-                rules = RuleSet(self.config.rules_snapshot())
+                rules = self.config.active_rules()
                 path = req.target
 
                 if host in CDN_HOSTS:
