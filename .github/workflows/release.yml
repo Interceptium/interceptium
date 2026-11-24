@@ -166,7 +166,7 @@ jobs:
 
   release:
     if: github.event_name == 'workflow_dispatch' && inputs.version != ''
-    needs: [test, windows-setup, sources]
+    needs: [windows-setup, sources]  # tests already run on every push; no need to wait for a free Mac
     runs-on: ubuntu-latest
     permissions:
       contents: write  # only this job may change releases
