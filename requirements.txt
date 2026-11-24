@@ -1,0 +1,2 @@
+# Runtime: the only third-party package (PyCA cryptography).
+cryptography==50.0.1
