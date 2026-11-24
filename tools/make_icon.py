@@ -36,6 +36,12 @@ def ico_bytes(png: bytes, size: int = 256) -> bytes:
     return header + entry + png
 
 
+def icns_bytes(pngs: dict[str, bytes]) -> bytes:
+    """Apple icon container holding PNG images (types ic07=128px, ic08=256px)."""
+    body = b"".join(kind.encode("ascii") + struct.pack(">I", len(data) + 8) + data for kind, data in pngs.items())
+    return b"icns" + struct.pack(">I", len(body) + 8) + body
+
+
 def draw(size: int = 256, ss: int = 3) -> bytearray:
     bg = (18, 20, 30)
     ring = (47, 211, 199)
@@ -88,6 +94,8 @@ def main() -> None:
         for size in (48, 96):
             (ASSETS / f"logo_{size}.png").write_bytes(png_bytes(size, size, draw(size, 4)))
     (ASSETS / "logo.ico").write_bytes(ico_bytes(png))
+    small = png_bytes(128, 128, draw(128, 4))
+    (ASSETS / "logo.icns").write_bytes(icns_bytes({"ic07": small, "ic08": png}))
     print("wrote", ASSETS)
 
 

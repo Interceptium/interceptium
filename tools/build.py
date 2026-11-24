@@ -30,8 +30,10 @@ def main() -> int:
         "--exclude-module", "unittest",
         "--exclude-module", "pydoc",
     ]
-    if sys.platform in ("win32", "darwin"):
+    if sys.platform == "win32":
         args += ["--icon", str(ROOT / "assets" / "logo.ico")]
+    elif sys.platform == "darwin":
+        args += ["--icon", str(ROOT / "assets" / "logo.icns")]
     if sys.platform == "darwin":
         args += ["--osx-bundle-identifier", "io.github.interceptium"]
     pyi.run(args)

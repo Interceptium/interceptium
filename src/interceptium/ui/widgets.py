@@ -663,6 +663,16 @@ class ScrollArea(tk.Frame):
         self.pos = self.target = max(0.0, min(self._max(), px))
         self._apply()
 
+    def rise(self, distance: int = 22, duration: float = 0.3) -> None:
+        """Content glides up into place (used when the list is replaced)."""
+        d = T.S(distance)
+
+        def step(v: float) -> None:
+            self.canvas.coords(self._win, 0, round(d * (1 - v)))
+
+        self.canvas.coords(self._win, 0, d)
+        anim.get().tween((self, "rise"), duration, step, ease=lambda t: 1 - (1 - t) ** 5)
+
     def _bar_press(self, e: tk.Event) -> None:
         self._drag = (e.y, self.pos)
 

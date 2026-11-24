@@ -30,7 +30,7 @@ SAMPLE = {"replacement_rules": [
 
 
 @unittest.skipUnless(ENABLED, "set INTERCEPTIUM_GUI_TESTS=1 to run GUI tests")
-class GuiTests(unittest.TestCase):
+class GuiBase(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
         self.home = Path(self.tmp.name)
@@ -80,6 +80,8 @@ class GuiTests(unittest.TestCase):
     def saved(self) -> dict:
         return json.loads(self.win.store.path_for(self.name).read_text(encoding="utf-8"))
 
+
+class GuiTests(GuiBase):
     def test_rule_toggle_by_click_saves(self) -> None:
         card = self.cards()[0]
         t = card.toggle
@@ -293,6 +295,56 @@ class GuiTests(unittest.TestCase):
         self.pump(0.4)
         self.assertIn("Skies", self.win.store.names())
         self.assertEqual(self.win.selected, "Skies")
+
+
+class ConfigSmoothness(GuiBase):
+    """Config sidebar updates in place with animations instead of rebuilding."""
+
+    def test_select_keeps_rows_and_crossfades_highlight(self) -> None:
+        self.win.store.create("Other")
+        self.win.refresh_configs()
+        self.pump(0.4)
+        rows_before = dict(self.win.config_rows)
+        old, new = rows_before[self.name], rows_before["Other"]
+        self.win.select_config("Other")
+        self.assertIs(self.win.config_rows["Other"], new, "rows must be reused, not rebuilt")
+        self.pump(0.08)
+        self.assertTrue(0.0 < new.sel < 1.0 and 0.0 < old.sel < 1.0, (old.sel, new.sel))  # mid cross-fade
+        self.pump(0.4)
+        self.assertEqual((old.sel, new.sel), (0.0, 1.0))
+        self.assertTrue(all(r.winfo_exists() for r in rows_before.values()))
+
+    def test_switch_animates_header_and_rule_list(self) -> None:
+        self.win.store.create("Other")
+        self.win.refresh_configs()
+        self.pump(0.3)
+        self.win.select_config("Other")
+        self.pump(0.05)
+        _x, y = self.win.rule_list.canvas.coords(self.win.rule_list._win)
+        self.assertGreater(y, 0)  # still rising
+        self.assertNotEqual(self.win.config_title.cget("fg"), "#eceff5")  # still fading in
+        self.pump(0.5)
+        _x, y = self.win.rule_list.canvas.coords(self.win.rule_list._win)
+        self.assertEqual(y, 0)
+        self.assertEqual(self.win.config_title.cget("fg"), "#eceff5")
+
+    def test_new_row_grows_and_deleted_row_shrinks(self) -> None:
+        self.win.store.create("Grow")
+        self.win.refresh_configs()
+        row = self.win.config_rows["Grow"]
+        self.pump(0.08)
+        self.assertLess(row.winfo_height(), row.h)  # still growing
+        self.pump(0.4)
+        self.assertEqual(row.winfo_height(), row.h)
+        names = [r.name for r in self.win.config_list.inner.pack_slaves()]
+        self.assertEqual(names, sorted(names, key=str.lower))  # inserted in order
+        self.win.store.delete("Grow")
+        self.win.refresh_configs()
+        self.pump(0.08)
+        self.assertTrue(row.winfo_exists() and row.winfo_height() < row.h)  # shrinking
+        self.pump(0.4)
+        self.assertFalse(row.winfo_exists())
+        self.assertNotIn("Grow", self.win.config_rows)
 
 
 if __name__ == "__main__":

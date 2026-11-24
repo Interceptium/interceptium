@@ -351,42 +351,83 @@ class SettingsPage(Page):
 
 # ------------------------------------------------------------ list items --
 class ConfigRow(Host):
+    """One config in the sidebar. Selection, hover, insertion and removal are all animated."""
+
+    GROW_TIME = 0.24
+
     def __init__(self, parent: tk.Misc, name: str, count: int, enabled: bool, selected: bool,
-                 on_select: Callable[[str], None], on_toggle: Callable[[str, bool], None]) -> None:
+                 on_select: Callable[[str], None], on_toggle: Callable[[str, bool], None],
+                 grow: bool = False) -> None:
         self.h = T.S(52)
-        super().__init__(parent, T.S(240), self.h)
-        self.name, self.count, self.selected = name, count, selected
+        super().__init__(parent, T.S(240), 1 if grow else self.h)
+        self.name = name
         self.on_select, self.on_toggle = on_select, on_toggle
         self.hover = 0.0
+        self.sel = 1.0 if selected else 0.0
+        self.selected = selected
+        self.removing = False
         self.w = 0
+        self._hover_bg = self.create_image(0, 0, anchor="nw")
         self._outline = self.create_image(0, 0, anchor="nw")
         self._bg = self.create_image(0, 0, anchor="nw")
         self._title = self.create_text(T.S(16), T.S(18), anchor="w", font=T.font(10, "bold"), fill=T.TEXT)
-        noun = "rule" if count == 1 else "rules"
-        self.create_text(T.S(16), T.S(35), anchor="w", font=T.font(9), fill=T.MUTED, text=f"{count} {noun}")
+        self._count = self.create_text(T.S(16), T.S(35), anchor="w", font=T.font(9), fill=T.MUTED)
+        self.set_count(count)
         self.toggle = ToggleC(self, 0, (self.h - T.S(22)) // 2, enabled, self._toggled)
-        self.bind("<Enter>", lambda _e: self._fade(1.0))
-        self.bind("<Leave>", lambda _e: self._fade(0.0))
+        self.bind("<Enter>", lambda _e: self._tween("hover", 1.0, 0.14))
+        self.bind("<Leave>", lambda _e: self._tween("hover", 0.0, 0.14))
         self.bind("<ButtonRelease-1>", self._click)
         self.bind("<Configure>", self._resize)
+        if grow:
+            self._grow(1, self.h)
 
+    # -- animation helpers ------------------------------------------------------
+    def _tween(self, attr: str, target: float, duration: float) -> None:
+        start = getattr(self, attr)
+
+        def step(v: float) -> None:
+            setattr(self, attr, start + (target - start) * v)
+            self._draw()
+
+        anim.get().tween((self, attr), duration, step)
+
+    def _grow(self, start: int, target: int, done: Callable[[], None] | None = None) -> None:
+        def step(v: float) -> None:
+            self.configure(height=max(1, round(start + (target - start) * v)))
+
+        anim.get().tween((self, "grow"), self.GROW_TIME, step, ease=anim.ease_in_out, done=done)
+
+    # -- public -----------------------------------------------------------------
+    def set_selected(self, selected: bool) -> None:
+        if selected != self.selected:
+            self.selected = selected
+            self._tween("sel", 1.0 if selected else 0.0, 0.2)
+
+    def set_count(self, count: int) -> None:
+        self.itemconfigure(self._count, text=f"{count} {'rule' if count == 1 else 'rules'}")
+
+    def set_enabled(self, enabled: bool) -> None:
+        if enabled != self.toggle.value:
+            self.toggle.set(enabled)
+
+    def remove(self) -> None:
+        """Shrink away, then destroy."""
+        if self.removing:
+            return
+        self.removing = True
+        self._grow(self.winfo_height() or self.h, 1, done=self.destroy)
+
+    # -- events -------------------------------------------------------------------
     def _toggled(self, value: bool) -> None:
         self.on_toggle(self.name, value)
 
     def _click(self, e: tk.Event) -> None:
+        if self.removing:
+            return
         over = self.find_overlapping(e.x, e.y, e.x, e.y)
         if any(self.toggle.tag in self.gettags(item) for item in over):
             return
         self.on_select(self.name)
-
-    def _fade(self, target: float) -> None:
-        start = self.hover
-
-        def step(v: float) -> None:
-            self.hover = start + (target - start) * v
-            self._draw()
-
-        anim.get().tween((self, "h"), 0.14, step)
 
     def _resize(self, e: tk.Event) -> None:
         if e.width != self.w:
@@ -398,18 +439,13 @@ class ConfigRow(Host):
         if self.w < 20:
             return
         r = T.S(14)
+        b = max(1, T.S(1))
         mask = gfx.rrect(self.w, self.h, r)
-        if self.selected:
-            b = max(1, T.S(1))
-            self.itemconfigure(self._outline, image=gfx.image(mask, gfx.mix(T.ACCENT, T.SURFACE, 0.55)),
-                               state="normal")
-            self.itemconfigure(self._bg, image=gfx.image(gfx.rrect(self.w - 2 * b, self.h - 2 * b, r - b),
-                                                         T.CARD_SELECTED))
-            self.coords(self._bg, b, b)
-        else:
-            self.itemconfigure(self._outline, state="hidden")
-            self.itemconfigure(self._bg, image=gfx.image(mask, T.CARD_HOVER, self.hover))
-            self.coords(self._bg, 0, 0)
+        self.itemconfigure(self._hover_bg, image=gfx.image(mask, T.CARD_HOVER, self.hover * (1 - self.sel)))
+        self.itemconfigure(self._outline, image=gfx.image(mask, gfx.mix(T.ACCENT, T.SURFACE, 0.55), self.sel))
+        self.itemconfigure(self._bg, image=gfx.image(gfx.rrect(self.w - 2 * b, self.h - 2 * b, r - b),
+                                                     T.CARD_SELECTED, self.sel))
+        self.coords(self._bg, b, b)
         width = self.w - T.S(16) - self.toggle.w - T.S(26)
         self.itemconfigure(self._title, text=T.elide(self.name, T.font(10, "bold"), width))
 
@@ -549,6 +585,7 @@ class MainWindow:
         self.data: dict = self.store.load_config(self.selected)
         self.show_all = False
         self.collapsed: set[int] = set()
+        self.config_rows: dict[str, ConfigRow] = {}
 
         root.title(APP_NAME)
         root.configure(bg=T.BG)
@@ -759,16 +796,34 @@ class MainWindow:
 
     # -- configs -----------------------------------------------------------
     def refresh_configs(self) -> None:
-        y = self.config_list.pos
-        for child in self.config_list.inner.winfo_children():
-            child.destroy()
-        for name in self.store.names():
+        """Bring the sidebar in line with the config files, animating any change."""
+        inner = self.config_list.inner
+        first = not self.config_rows
+        names = self.store.names()
+        for name, row in list(self.config_rows.items()):
+            if name not in names:
+                del self.config_rows[name]
+                row.remove()
+        previous: ConfigRow | None = None
+        for name in names:
             data = self.data if name == self.selected else self.store.load_config(name)
             total, _on = count_rules(data["replacement_rules"])
-            ConfigRow(self.config_list.inner, name, total, self.store.is_enabled(name), name == self.selected,
-                      self.select_config, self.toggle_config).pack(fill="x", pady=T.S(2))
-        self.root.update_idletasks()
-        self.config_list.to(y)
+            row = self.config_rows.get(name)
+            if row is None:
+                row = ConfigRow(inner, name, total, self.store.is_enabled(name), name == self.selected,
+                                self.select_config, self.toggle_config, grow=not first)
+                self.config_rows[name] = row
+                siblings = [w for w in inner.pack_slaves() if w is not row]
+                after = siblings.index(previous) + 1 if previous in siblings else 0
+                if after < len(siblings):
+                    row.pack(fill="x", pady=T.S(2), before=siblings[after])
+                else:
+                    row.pack(fill="x", pady=T.S(2))
+            else:
+                row.set_count(total)
+                row.set_enabled(self.store.is_enabled(name))
+                row.set_selected(name == self.selected)
+            previous = row
         self._update_header()
 
     def _update_header(self) -> None:
@@ -776,6 +831,13 @@ class MainWindow:
         self.config_title.configure(text=self.selected)
         noun = "rule" if total == 1 else "rules"
         self.config_sub.configure(text=f"{total} {noun}, {on} enabled")
+
+    def _fade_header(self) -> None:
+        def step(v: float) -> None:
+            self.config_title.configure(fg=gfx.mix(T.SURFACE, T.TEXT, v))
+            self.config_sub.configure(fg=gfx.mix(T.SURFACE, T.MUTED, v))
+
+        anim.get().tween((self, "header"), 0.26, step)
 
     def select_config(self, name: str) -> None:
         if name == self.selected:
@@ -785,9 +847,15 @@ class MainWindow:
         self.show_all = False
         self.collapsed.clear()
         self.search.var.set("")
+        job = getattr(self, "_search_job", None)
+        if job:  # clearing the search must not trigger a second rebuild
+            self.root.after_cancel(job)
+            self._search_job = None
         self.refresh_configs()
         self.refresh_rules()
         self.rule_list.to(0)
+        self.rule_list.rise()
+        self._fade_header()
 
     def toggle_config(self, name: str, value: bool) -> None:
         self.store.set_enabled(name, value)
