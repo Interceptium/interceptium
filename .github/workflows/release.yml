@@ -56,6 +56,21 @@ jobs:
         run: python tools/build.py
       - name: Build the installer
         run: python setup/build_setup.py
+      - name: Start-up check with a console build (shows errors a windowed build would hide)
+        shell: pwsh
+        timeout-minutes: 6
+        run: |
+          python -m PyInstaller run_interceptium.py --onefile --console --noconfirm --name InterceptiumConsole `
+            --paths src --distpath dist-debug --workpath build-debug --specpath build-debug | Out-Null
+          $p = Start-Process dist-debug\InterceptiumConsole.exe -ArgumentList '--version' -PassThru `
+            -RedirectStandardOutput out.txt -RedirectStandardError err.txt
+          $ok = $p.WaitForExit(120000)
+          if (-not $ok) { Stop-Process -Id $p.Id -Force }
+          Write-Host '--- stdout'; Get-Content out.txt
+          Write-Host '--- stderr'; Get-Content err.txt
+          if (-not $ok) { throw 'console build did not start within 2 minutes' }
+          if ($p.ExitCode -ne 0) { throw "console build exited with $($p.ExitCode)" }
+
       - name: Install, repair and uninstall (the way Windows Settings does)
         shell: pwsh
         timeout-minutes: 12
