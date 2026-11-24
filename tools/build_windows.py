@@ -67,19 +67,21 @@ def fetch_runtime(version: str) -> Path:
 
 
 def check_signatures(files: list[Path]) -> None:
-    """Refuse to ship a runtime whose executables aren't validly signed by the Python Software Foundation."""
-    script = (
-        "$ErrorActionPreference='Stop';"
-        "foreach ($f in $env:CHECK_FILES.Split('|')) {"
-        "  $s = Get-AuthenticodeSignature -LiteralPath $f;"
-        "  if ($s.Status -ne 'Valid' -or $s.SignerCertificate.Subject -notmatch 'Python Software Foundation') {"
-        "    throw ('bad signature: ' + $f + ' ' + $s.Status + ' ' + $s.SignerCertificate.Subject) };"
-        "  Write-Host ('  signed by PSF: ' + (Split-Path $f -Leaf)) }"
-    )
-    env = dict(os.environ, CHECK_FILES="|".join(str(f) for f in files))
-    env.pop("PSModulePath", None)  # PowerShell 7's module path breaks Windows PowerShell's own modules
-    run(["powershell.exe", "-NoProfile", "-NonInteractive", "-Command",
-         "Import-Module Microsoft.PowerShell.Security; " + script], env=env)
+    """Refuse to ship a runtime whose executables aren't validly signed by the Python Software Foundation.
+
+    Uses Microsoft's signtool (Windows SDK, needed for the build anyway) to verify each
+    Authenticode signature and its certificate chain.
+    """
+    for f in files:
+        batch = BUILD / "verify.bat"
+        batch.write_text(f'@echo off\r\ncall "{vcvars()}" >nul || exit /b 1\r\nsigntool verify /pa /v "{f}"\r\n',
+                         encoding="utf-8")
+        result = subprocess.run(["cmd.exe", "/c", str(batch)], capture_output=True, text=True)
+        output = result.stdout + result.stderr
+        if result.returncode != 0 or "Successfully verified" not in output or "Python Software Foundation" not in output:
+            print(output)
+            raise SystemExit(f"bad or missing signature: {f}")
+        print(f"  signed by the Python Software Foundation: {f.name}", flush=True)
 
 
 def build_runtime() -> None:
