@@ -58,11 +58,17 @@ jobs:
         run: python setup/build_setup.py
       - name: Install, repair and uninstall (the way Windows Settings does)
         shell: pwsh
-        timeout-minutes: 10
+        timeout-minutes: 12
+        env:
+          INTERCEPTIUM_TRACE_AFTER: "100"
         run: |
           $ErrorActionPreference = 'Stop'
           $log = Join-Path $env:RUNNER_TEMP 'setup.log'
-          function Show-Log { if (Test-Path $log) { Get-Content $log | ForEach-Object { Write-Host "  setup> $_" } } }
+          $env:INTERCEPTIUM_TRACE = Join-Path $env:RUNNER_TEMP 'trace.log'
+          function Show-Log {
+            if (Test-Path $log) { Get-Content $log | ForEach-Object { Write-Host "  setup> $_" } }
+            if (Test-Path $env:INTERCEPTIUM_TRACE) { Get-Content $env:INTERCEPTIUM_TRACE | ForEach-Object { Write-Host "  trace> $_" } }
+          }
           function Run-Exe([string]$exe, [string[]]$arguments, [int]$seconds = 180) {
             # Waits for this process only (not stray children) and never longer than $seconds.
             $p = Start-Process -FilePath $exe -ArgumentList $arguments -PassThru
@@ -80,6 +86,11 @@ jobs:
           $dir = Join-Path $env:RUNNER_TEMP 'Interceptium'
           $key = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Interceptium'
           $lnk = Join-Path ([Environment]::GetFolderPath('Programs')) 'Interceptium.lnk'
+
+          Write-Host '== built app starts (before installing)'
+          $code = Run-Exe (Resolve-Path dist\Interceptium.exe).Path @('--version') 150
+          Show-Log
+          if ($code -ne 0) { throw "app exited with $code" }
 
           Write-Host '== install'
           $code = Run-Exe $setup @('--quiet', '--dir', "`"$dir`"", '--log', "`"$log`"")
