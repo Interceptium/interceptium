@@ -174,5 +174,16 @@ class EntryPointTests(Fixture):
         self.assertEqual(entry.run_quiet(installer, args), 1)
 
 
+    def test_quiet_mode_writes_log(self) -> None:
+        log = self.root / "setup.log"
+        args = entry.parse(["--quiet", "--dir", str(self.dest), "--log", str(log)])
+        self.assertEqual(entry.run_quiet(self.installer, args), 0)
+        text = log.read_text()
+        self.assertIn("Copying Interceptium", text)
+        self.assertIn("finished", text)
+        bad = Installer(self.ops, None, None, "1.0.0")
+        self.assertEqual(entry.run_quiet(bad, entry.parse(["--quiet", "--log", str(log)])), 1)
+        self.assertIn("failed: This setup file is incomplete", log.read_text())
+
 if __name__ == "__main__":
     unittest.main()

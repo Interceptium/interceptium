@@ -56,41 +56,66 @@ jobs:
         run: python tools/build.py
       - name: Build the installer
         run: python setup/build_setup.py
-      - name: Install, check, uninstall (the way Windows Settings does)
+      - name: Install, repair and uninstall (the way Windows Settings does)
         shell: pwsh
+        timeout-minutes: 10
         run: |
           $ErrorActionPreference = 'Stop'
+          $log = Join-Path $env:RUNNER_TEMP 'setup.log'
+          function Show-Log { if (Test-Path $log) { Get-Content $log | ForEach-Object { Write-Host "  setup> $_" } } }
+          function Run-Exe([string]$exe, [string[]]$arguments, [int]$seconds = 180) {
+            # Waits for this process only (not stray children) and never longer than $seconds.
+            $p = Start-Process -FilePath $exe -ArgumentList $arguments -PassThru
+            if (-not $p.WaitForExit($seconds * 1000)) { Show-Log; Stop-Process -Id $p.Id -Force; throw "$exe timed out" }
+            return $p.ExitCode
+          }
+          function Wait-Until([scriptblock]$done, [string]$what, [int]$seconds = 180) {
+            $deadline = (Get-Date).AddSeconds($seconds)
+            while (-not (& $done)) {
+              if ((Get-Date) -gt $deadline) { Show-Log; throw "timed out waiting for $what" }
+              Start-Sleep -Seconds 2
+            }
+          }
           $setup = (Get-ChildItem dist\Interceptium-Setup-*.exe | Select-Object -First 1).FullName
           $dir = Join-Path $env:RUNNER_TEMP 'Interceptium'
-          $p = Start-Process $setup -ArgumentList @('--quiet', '--dir', $dir) -Wait -PassThru
-          if ($p.ExitCode -ne 0) { throw "install exited with $($p.ExitCode)" }
+          $key = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Interceptium'
+          $lnk = Join-Path ([Environment]::GetFolderPath('Programs')) 'Interceptium.lnk'
+
+          Write-Host '== install'
+          $code = Run-Exe $setup @('--quiet', '--dir', "`"$dir`"", '--log', "`"$log`"")
+          Show-Log
+          if ($code -ne 0) { throw "install exited with $code" }
           foreach ($f in 'Interceptium.exe', 'Interceptium Setup.exe', 'install.json') {
             if (-not (Test-Path (Join-Path $dir $f))) { throw "missing $f" }
           }
-          $key = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Interceptium'
           $entry = Get-ItemProperty $key
           if ($entry.InstallLocation -ne $dir) { throw "wrong InstallLocation: $($entry.InstallLocation)" }
           if ($entry.DisplayName -ne 'Interceptium') { throw 'wrong DisplayName' }
-          $lnk = Join-Path ([Environment]::GetFolderPath('Programs')) 'Interceptium.lnk'
           if (-not (Test-Path $lnk)) { throw 'Start menu shortcut missing' }
-          $p = Start-Process (Join-Path $dir 'Interceptium.exe') -ArgumentList '--version' -Wait -PassThru
-          if ($p.ExitCode -ne 0) { throw "app exited with $($p.ExitCode)" }
-          # repair: delete the app, run the maintenance copy with --repair, the app must come back
+
+          Write-Host '== app starts'
+          $code = Run-Exe (Join-Path $dir 'Interceptium.exe') @('--version') 60
+          if ($code -ne 0) { throw "app exited with $code" }
+
+          Write-Host '== repair'
           Remove-Item (Join-Path $dir 'Interceptium.exe')
-          Start-Process (Join-Path $dir 'Interceptium Setup.exe') -ArgumentList @('--repair', '--quiet')
-          $deadline = (Get-Date).AddSeconds(120)
-          while (-not (Test-Path (Join-Path $dir 'Interceptium.exe'))) {
-            if ((Get-Date) -gt $deadline) { throw 'repair did not restore the app' }
-            Start-Sleep -Seconds 2
-          }
-          Start-Sleep -Seconds 8
-          # uninstall exactly like Settings > Apps > Uninstall (quiet variant)
-          cmd /c $entry.QuietUninstallString
-          $deadline = (Get-Date).AddSeconds(120)
-          while ((Test-Path $dir) -or (Test-Path $key) -or (Test-Path $lnk)) {
-            if ((Get-Date) -gt $deadline) { throw 'uninstall did not finish' }
-            Start-Sleep -Seconds 2
-          }
+          Remove-Item $log -ErrorAction SilentlyContinue
+          $code = Run-Exe (Join-Path $dir 'Interceptium Setup.exe') @('--repair', '--quiet', '--log', "`"$log`"")
+          if ($code -ne 0) { Show-Log; throw "repair launcher exited with $code" }
+          Wait-Until { (Test-Path $log) -and ((Get-Content $log -Raw) -match 'finished|failed|Traceback') } 'repair'
+          Show-Log
+          if ((Get-Content $log -Raw) -notmatch 'finished') { throw 'repair failed' }
+          if (-not (Test-Path (Join-Path $dir 'Interceptium.exe'))) { throw 'repair did not restore the app' }
+
+          Write-Host '== uninstall (QuietUninstallString from the Apps entry)'
+          $entry = Get-ItemProperty $key
+          if ($entry.QuietUninstallString -notmatch '^"([^"]+)"\s*(.*)$') { throw "odd uninstall string: $($entry.QuietUninstallString)" }
+          $exe, $rest = $Matches[1], $Matches[2]
+          Remove-Item $log -ErrorAction SilentlyContinue
+          $code = Run-Exe $exe @(($rest -split ' ') + @('--log', "`"$log`""))
+          if ($code -ne 0) { Show-Log; throw "uninstall launcher exited with $code" }
+          Wait-Until { -not ((Test-Path $dir) -or (Test-Path $key) -or (Test-Path $lnk)) } 'uninstall'
+          Show-Log
           Write-Host 'Install, repair and uninstall all worked.'
       - uses: actions/upload-artifact@v4
         with:

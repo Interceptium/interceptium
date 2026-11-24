@@ -16,6 +16,8 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
+import traceback
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -68,7 +70,8 @@ def relaunch_from_temp(ops, argv: list[str]) -> bool:
         return False
     temp = Path(tempfile.gettempdir()) / f"interceptium-setup-{os.getpid()}.exe"
     shutil.copyfile(exe, temp)
-    subprocess.Popen([str(temp), *argv, "--from-temp"], close_fds=True)
+    subprocess.Popen([str(temp), *argv, "--from-temp"], close_fds=True, stdin=subprocess.DEVNULL,
+                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     return True
 
 
@@ -86,41 +89,81 @@ def parse(argv: list[str]) -> argparse.Namespace:
     p.add_argument("--remove-data", action="store_true")
     p.add_argument("--launch", action="store_true")
     p.add_argument("--from-temp", action="store_true")
+    p.add_argument("--log", type=Path, help="write progress and errors to this file (quiet mode)")
     return p.parse_args(argv)
 
 
-def run_quiet(installer: Installer, args: argparse.Namespace) -> int:
+class Log:
+    """Quiet mode has no window and no console, so it reports to a file."""
+
+    def __init__(self, path: Path | None) -> None:
+        self.path = path
+
+    def __call__(self, text: str) -> None:
+        if self.path is None:
+            return
+        try:
+            with open(self.path, "a", encoding="utf-8") as fh:
+                fh.write(f"{time.strftime('%H:%M:%S')} [{os.getpid()}] {text}\n")
+        except OSError:
+            pass
+
+
+def run_quiet(installer: Installer, args: argparse.Namespace, log: "Log | None" = None) -> int:
+    log = log or Log(args.log)
+    last: list[str] = [""]
+
+    def progress(value: float, text: str) -> None:
+        if text != last[0]:
+            last[0] = text
+            log(f"{value:.0%} {text}")
+
     try:
         if args.uninstall:
             manifest = installer.installed()
             if manifest is None:
                 return 0
-            installer.uninstall(Path(manifest.directory), remove_data=args.remove_data)
+            installer.uninstall(Path(manifest.directory), remove_data=args.remove_data, progress=progress)
         elif args.repair:
-            installer.repair()
+            installer.repair(progress)
         elif args.reinstall:
-            installer.reinstall()
+            installer.reinstall(progress)
         else:
             options = Options(args.dir or default_directory(), not args.no_desktop, not args.no_start_menu)
-            manifest = installer.install(options)
+            manifest = installer.install(options, progress)
             if args.launch:
                 installer.ops.launch(Path(manifest.directory) / APP_EXE)
     except (SetupError, OSError) as exc:
+        log(f"failed: {exc}")
         print(f"Interceptium Setup: {exc}", file=sys.stderr)
         return 1
+    log("finished")
     return 0
 
 
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     args = parse(argv)
-    ops = make_ops()
-    if relaunch_from_temp(ops, argv):
-        return 0
+    log = Log(args.log)
+    log(f"start {' '.join(argv)}")
+    try:
+        ops = make_ops()
+        if relaunch_from_temp(ops, argv):
+            log("continuing from a temporary copy")
+            return 0
+    except Exception:
+        log(traceback.format_exc())
+        if args.quiet:
+            return 3
+        raise
     installer = Installer(ops, payload_path(), setup_path(), __version__)
     try:
         if args.quiet:
-            return run_quiet(installer, args)
+            try:
+                return run_quiet(installer, args, log)
+            except Exception:  # never leave an unattended run stuck behind an error dialog
+                log(traceback.format_exc())
+                return 3
         from .ui import run_ui
 
         if args.uninstall:

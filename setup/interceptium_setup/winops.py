@@ -39,10 +39,26 @@ def _folder(csidl: int, fallback: Path) -> Path:
 
 
 def _run(args: list[str], timeout: float = 60, env: dict[str, str] | None = None) -> int:
+    """Run a helper with no pipes at all and a hard time limit.
+
+    The setup is a windowed program with no console, so its own standard
+    handles are invalid; children get DEVNULL instead (an inherited invalid
+    stdin can make powershell.exe wait forever). Output isn't captured, so a
+    timeout can't block on a pipe held open by a grandchild either.
+    """
     try:
-        return subprocess.run(args, capture_output=True, timeout=timeout, env=env,
-                              creationflags=CREATE_NO_WINDOW).returncode
-    except (OSError, subprocess.TimeoutExpired):
+        proc = subprocess.Popen(args, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                                stderr=subprocess.DEVNULL, env=env, creationflags=CREATE_NO_WINDOW)
+    except OSError:
+        return -1
+    try:
+        return proc.wait(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            pass
         return -1
 
 
@@ -106,7 +122,8 @@ class WindowsOps:
 
     def launch(self, exe: Path) -> None:
         try:
-            subprocess.Popen([str(exe)], cwd=str(exe.parent), close_fds=True,
+            subprocess.Popen([str(exe)], cwd=str(exe.parent), close_fds=True, stdin=subprocess.DEVNULL,
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                              creationflags=DETACHED_PROCESS | 0x00000200)  # + NEW_PROCESS_GROUP
         except OSError:
             pass
@@ -118,7 +135,8 @@ def schedule_self_delete(path: Path) -> None:
         return
     cmd = f'ping 127.0.0.1 -n 5 > nul & del /f /q "{path}"'
     try:
-        subprocess.Popen(["cmd.exe", "/c", cmd], close_fds=True,
+        subprocess.Popen(["cmd.exe", "/c", cmd], close_fds=True, stdin=subprocess.DEVNULL,
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                          creationflags=CREATE_NO_WINDOW | DETACHED_PROCESS)
     except OSError:
         pass

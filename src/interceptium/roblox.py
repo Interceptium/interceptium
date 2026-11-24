@@ -183,6 +183,7 @@ def list_players() -> list[Proc]:
             out = subprocess.run(
                 ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script],
                 capture_output=True, text=True, timeout=15, creationflags=_NO_WINDOW,
+                stdin=subprocess.DEVNULL,
             ).stdout.strip()
         except (OSError, subprocess.TimeoutExpired):
             return procs
@@ -200,7 +201,8 @@ def list_players() -> list[Proc]:
             procs.append(Proc(int(row["ProcessId"]), int(row.get("ParentProcessId") or 0), exe, _split_args(cmd)))
     elif IS_MACOS:
         try:
-            out = subprocess.run(["ps", "-axo", "pid=,ppid=,command="], capture_output=True, text=True, timeout=10).stdout
+            out = subprocess.run(["ps", "-axo", "pid=,ppid=,command="], capture_output=True, text=True, timeout=10,
+                                 stdin=subprocess.DEVNULL).stdout
         except (OSError, subprocess.TimeoutExpired):
             return procs
         for line in out.splitlines():
@@ -229,7 +231,9 @@ def is_player_running() -> bool:
 def kill(pid: int) -> None:
     try:
         if IS_WINDOWS:
-            subprocess.run(["taskkill", "/PID", str(pid), "/F"], capture_output=True, timeout=10, creationflags=_NO_WINDOW)
+            subprocess.run(["taskkill", "/PID", str(pid), "/F"], stdin=subprocess.DEVNULL,
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=10,
+                           creationflags=_NO_WINDOW)
         else:
             os.kill(pid, 9)
     except (OSError, subprocess.TimeoutExpired):
@@ -268,7 +272,8 @@ def launch(proxy_url: str, args: list[str] | None = None, exe: Path | None = Non
             log.emit("Roblox", "no Roblox Player install found")
             return None
         exe = installs[0].exe
-    kwargs: dict[str, object] = {"env": proxy_env(proxy_url), "cwd": str(exe.parent)}
+    kwargs: dict[str, object] = {"env": proxy_env(proxy_url), "cwd": str(exe.parent), "stdin": subprocess.DEVNULL,
+                                 "stdout": subprocess.DEVNULL, "stderr": subprocess.DEVNULL}
     if IS_WINDOWS:
         kwargs["creationflags"] = 0x00000008 | 0x00000200  # DETACHED_PROCESS | NEW_PROCESS_GROUP
     else:

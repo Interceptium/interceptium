@@ -44,7 +44,8 @@ def launch_setup(action: str, setup: Path | None = None) -> bool:
     if setup is None:
         return False
     try:
-        subprocess.Popen([str(setup), f"--{action}"], close_fds=True,
+        subprocess.Popen([str(setup), f"--{action}"], close_fds=True, stdin=subprocess.DEVNULL,
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                          creationflags=0x00000008 if sys.platform == "win32" else 0)  # DETACHED_PROCESS
     except OSError:
         return False
