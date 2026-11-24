@@ -1,19 +1,23 @@
 /* Interceptium Setup stub.
  *
  * The setup's files (the official Python runtime, Interceptium and the setup
- * program) are stored after the end of this .exe in a plain, uncompressed list:
+ * program) are stored after the end of this .exe as a list:
  *
  *     repeated:  u32 name length | UTF-8 name (forward slashes) | u64 size | bytes
- *     trailer:   u64 list offset | u64 list size | "INTCPTM1"
+ *     trailer:   u64 block offset | u64 block size | "INTCPTM1" (list stored as is)
+ *                                                  | "INTCPTM2" (list compressed with
+ *                                                    Windows' built-in LZMS, Cabinet API)
  *
  * The stub copies them into a fresh folder under %TEMP%, runs the setup with the
  * bundled pythonw.exe (signed by the Python Software Foundation), waits for it,
  * then deletes that folder. It writes nowhere else and contacts nothing.
  */
 #include "common.h"
+#include <compressapi.h>
 #include <stdint.h>
 
-static const char MAGIC[8] = {'I', 'N', 'T', 'C', 'P', 'T', 'M', '1'};
+static const char MAGIC_PLAIN[8] = {'I', 'N', 'T', 'C', 'P', 'T', 'M', '1'};
+static const char MAGIC_LZMS[8] = {'I', 'N', 'T', 'C', 'P', 'T', 'M', '2'};
 #define CHUNK (1u << 20)
 
 static BOOL quiet_mode(void) {
@@ -86,37 +90,77 @@ static BOOL delete_tree(const wchar_t *dir) {
     return RemoveDirectoryW(dir);
 }
 
-static int unpack(HANDLE f, uint64_t offset, uint64_t size, const wchar_t *target) {
+static BOOL write_all(HANDLE o, const unsigned char *data, uint64_t size) {
+    while (size) {
+        DWORD want = size > CHUNK ? CHUNK : (DWORD)size, wrote = 0;
+        if (!WriteFile(o, data, want, &wrote, NULL) || wrote != want) return FALSE;
+        data += want;
+        size -= want;
+    }
+    return TRUE;
+}
+
+/* Write every file in the (uncompressed) list `list` below `target`. */
+static int unpack(const unsigned char *list, uint64_t size, const wchar_t *target) {
     static wchar_t out_path[PATH_CAP], wide_name[PATH_CAP];
-    char *buf = (char *)HeapAlloc(GetProcessHeap(), 0, CHUNK);
-    if (!buf) return 0;
-    uint64_t pos = offset, end = offset + size;
-    int ok = 1;
-    while (ok && pos < end) {
+    uint64_t pos = 0;
+    while (pos < size) {
         uint32_t name_len;
         uint64_t data_len;
         char name[1024];
-        if (!seek_to(f, pos) || !read_exact(f, &name_len, 4) || name_len == 0 || name_len >= sizeof name ||
-            !read_exact(f, name, name_len)) { ok = 0; break; }
+        if (size - pos < 4) return 0;
+        memcpy(&name_len, list + pos, 4);
+        if (name_len == 0 || name_len >= sizeof name || size - pos - 4 < (uint64_t)name_len + 8) return 0;
+        memcpy(name, list + pos + 4, name_len);
         name[name_len] = 0;
-        if (!read_exact(f, &data_len, 8) || !safe_name(name)) { ok = 0; break; }
-        if (!MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, name, -1, wide_name, PATH_CAP)) { ok = 0; break; }
+        memcpy(&data_len, list + pos + 4 + name_len, 8);
+        uint64_t start = pos + 12 + name_len;
+        if (!safe_name(name) || data_len > size - start) return 0;
+        if (!MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, name, -1, wide_name, PATH_CAP)) return 0;
         for (wchar_t *p = wide_name; *p; p++) if (*p == L'/') *p = L'\\';
         swprintf(out_path, PATH_CAP, L"%ls\\%ls", target, wide_name);
         make_parents(out_path);
         HANDLE o = CreateFileW(out_path, GENERIC_WRITE, 0, NULL, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, NULL);
-        if (o == INVALID_HANDLE_VALUE) { ok = 0; break; }
-        uint64_t left = data_len;
-        while (left && ok) {
-            DWORD want = left > CHUNK ? CHUNK : (DWORD)left, wrote = 0;
-            if (!read_exact(f, buf, want) || !WriteFile(o, buf, want, &wrote, NULL) || wrote != want) ok = 0;
-            left -= want;
-        }
+        if (o == INVALID_HANDLE_VALUE) return 0;
+        BOOL ok = write_all(o, list + start, data_len);
         CloseHandle(o);
-        pos += 4 + name_len + 8 + data_len;
+        if (!ok) return 0;
+        pos = start + data_len;
     }
-    HeapFree(GetProcessHeap(), 0, buf);
-    return ok && pos == end;
+    return pos == size;
+}
+
+/* Read the stored block; if compressed, expand it with Windows' own LZMS decompressor. */
+static unsigned char *load_list(HANDLE f, uint64_t offset, uint64_t size, BOOL compressed, uint64_t *out_size) {
+    HANDLE heap = GetProcessHeap();
+    if (size == 0 || size > ((uint64_t)1 << 31)) return NULL;
+    unsigned char *block = (unsigned char *)HeapAlloc(heap, 0, (SIZE_T)size);
+    if (!block) return NULL;
+    uint64_t got = 0;
+    BOOL ok = seek_to(f, offset);
+    while (ok && got < size) {
+        DWORD want = size - got > CHUNK ? CHUNK : (DWORD)(size - got);
+        ok = read_exact(f, block + got, want);
+        got += want;
+    }
+    if (!ok) { HeapFree(heap, 0, block); return NULL; }
+    if (!compressed) { *out_size = size; return block; }
+
+    DECOMPRESSOR_HANDLE d = NULL;
+    unsigned char *list = NULL;
+    SIZE_T needed = 0;
+    if (CreateDecompressor(COMPRESS_ALGORITHM_LZMS, NULL, &d)) {
+        Decompress(d, block, (SIZE_T)size, NULL, 0, &needed);  /* asks for the output size */
+        if (needed && needed <= ((SIZE_T)1 << 31)) list = (unsigned char *)HeapAlloc(heap, 0, needed);
+        if (list && !Decompress(d, block, (SIZE_T)size, list, needed, &needed)) {
+            HeapFree(heap, 0, list);
+            list = NULL;
+        }
+        CloseDecompressor(d);
+    }
+    HeapFree(heap, 0, block);
+    *out_size = needed;
+    return list;
 }
 
 int WINAPI wWinMain(HINSTANCE inst, HINSTANCE prev, PWSTR cmdline, int show) {
@@ -131,17 +175,25 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE prev, PWSTR cmdline, int show) {
     uint64_t offset = 0, size = 0;
     BOOL good = GetFileSizeEx(f, &total) && total.QuadPart > 24 && seek_to(f, (uint64_t)total.QuadPart - 24) &&
                 read_exact(f, &offset, 8) && read_exact(f, &size, 8) && read_exact(f, magic, 8) &&
-                memcmp(magic, MAGIC, 8) == 0 && offset + size + 24 == (uint64_t)total.QuadPart;
+                (memcmp(magic, MAGIC_PLAIN, 8) == 0 || memcmp(magic, MAGIC_LZMS, 8) == 0) &&
+                offset + size + 24 == (uint64_t)total.QuadPart;
     if (!good) { CloseHandle(f); return fail(L"This setup file is damaged or incomplete. Download it again."); }
+    uint64_t list_size = 0;
+    unsigned char *list = load_list(f, offset, size, memcmp(magic, MAGIC_LZMS, 8) == 0, &list_size);
+    CloseHandle(f);
+    if (!list) return fail(L"This setup file is damaged or incomplete. Download it again.");
 
     DWORD n = GetTempPathW(PATH_CAP, temp);
-    if (n == 0 || n >= PATH_CAP) { CloseHandle(f); return fail(L"No temporary folder is available."); }
+    if (n == 0 || n >= PATH_CAP) { HeapFree(GetProcessHeap(), 0, list); return fail(L"No temporary folder is available."); }
     swprintf(work, PATH_CAP, L"%lsInterceptiumSetup-%lu", temp, GetCurrentProcessId());
     delete_tree(work);
-    if (!CreateDirectoryW(work, NULL)) { CloseHandle(f); return fail(L"Could not create a temporary folder."); }
+    if (!CreateDirectoryW(work, NULL)) {
+        HeapFree(GetProcessHeap(), 0, list);
+        return fail(L"Could not create a temporary folder.");
+    }
 
-    int unpacked = unpack(f, offset, size, work);
-    CloseHandle(f);
+    int unpacked = unpack(list, list_size, work);
+    HeapFree(GetProcessHeap(), 0, list);
     if (!unpacked) { delete_tree(work); return fail(L"This setup file is damaged or incomplete. Download it again."); }
 
     swprintf(python, PATH_CAP, L"%ls\\runtime\\pythonw.exe", work);
