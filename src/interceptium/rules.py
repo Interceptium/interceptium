@@ -26,10 +26,10 @@ from typing import Callable, Iterable, Iterator
 
 MODES = ("id", "remove", "local", "cdn")
 MODE_LABELS = {
-    "id": "Replace with asset",
+    "id": "Replace",
     "remove": "Remove",
     "local": "Local file",
-    "cdn": "CDN URL (disabled)",
+    "cdn": "CDN",
 }
 
 ASSET_TYPES: dict[str, int] = {
@@ -193,13 +193,13 @@ def parse_target_text(text: str) -> list[str]:
 
 
 def describe(rule: dict) -> str:
+    """Short detail shown next to the action badge."""
     mode = rule_mode(rule)
     if mode == "id":
         target = rule.get("with_id")
-        return f"→ {target}" if target not in (None, "") else "→ removed"
-    if mode == "remove":
-        return "removed"
+        return str(target) if target not in (None, "") else ""
     if mode == "local":
-        path = str(rule.get("local_path") or "")
-        return "→ " + (path.replace("\\", "/").rsplit("/", 1)[-1] or "removed")
-    return "CDN rule (skipped: Interceptium never contacts other servers)"
+        return str(rule.get("local_path") or "").replace("\\", "/").rsplit("/", 1)[-1]
+    if mode == "cdn":
+        return "Not supported"
+    return ""

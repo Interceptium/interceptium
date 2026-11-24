@@ -238,7 +238,7 @@ def kill(pid: int) -> None:
 
 def clear_cache() -> int:
     if is_player_running():
-        log.emit("Cache", "Roblox is running; close it before clearing the cache")
+        log.emit("Cache", "not cleared: Roblox is running")
         return 0
     removed = 0
     for path in cache_files():
@@ -278,7 +278,7 @@ def launch(proxy_url: str, args: list[str] | None = None, exe: Path | None = Non
     except OSError as exc:
         log.emit("Roblox", f"launch failed: {exc}")
         return None
-    log.emit("Roblox", "Roblox launched through the proxy")
+    log.emit("Roblox", "launched")
     return proc.pid
 
 
@@ -335,7 +335,7 @@ class LaunchWatcher:
             if p.pid in self._ours or p.pid in self._handled:
                 continue
             self._handled.add(p.pid)
-            log.emit("Watcher", "Roblox started outside the proxy; restarting it through Interceptium")
+            log.emit("Watcher", "restarting Roblox through the proxy")
             kill(p.pid)
             time.sleep(1.0)
             install_ca(self._ca_pem())

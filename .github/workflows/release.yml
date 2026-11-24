@@ -37,6 +37,14 @@ jobs:
       - name: Run tests
         run: python -m unittest discover -s tests -v
 
+      - name: Run GUI tests (virtual display)
+        if: runner.os == 'Linux'
+        env:
+          INTERCEPTIUM_GUI_TESTS: "1"
+        run: |
+          sudo apt-get update -q && sudo apt-get install -y -q xvfb
+          xvfb-run -a -s "-screen 0 1400x900x24" python -m unittest tests.test_gui -v
+
       - name: Build executable
         run: python tools/build.py
 

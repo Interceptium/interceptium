@@ -5,7 +5,6 @@ from __future__ import annotations
 from . import roblox
 from .certs import CertAuthority
 from .config import ConfigStore
-from .logbus import log
 from .proxy import LISTEN_HOST, ProxyServer, ProxyThread
 from .router import AssetRouter
 
@@ -63,4 +62,3 @@ class Controller:
 
     def shutdown(self) -> None:
         self.stop()
-        log.emit("App", "bye")

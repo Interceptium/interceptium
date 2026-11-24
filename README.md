@@ -45,17 +45,17 @@ repository's source (see `.github/workflows/release.yml`).
 
 1. Open Interceptium.
 2. In **Configs** (left), pick a config or press **+** to make one. Every config with its switch **on** runs, so you can mix packs.
-3. Press **+ Add rule**:
+3. Press **Add rule**:
    - **Assets to change:** asset IDs or asset types, for example `1234567 2345678` or `Image`.
    - **Action:** *Replace* (with another asset ID), *Remove*, or *Local file*.
-4. Press the big round **power button** to start the proxy.
+4. Press the power button to start the proxy.
 5. Press **Launch Roblox**, or join a game from the website. With *Reroute website launches* on (in Settings), Interceptium restarts that Roblox window through the proxy.
 6. Roblox caches assets, so **clear the Roblox cache** after changing rules. *Clear cache when launching* does this for you.
 
 ## Configs and Fleasion compatibility
 
-Interceptium uses the same JSON format as Fleasion, so you can import Fleasion configs directly with the **↓** button, or by
-dropping them into the configs folder (the **⋯** button opens it).
+Interceptium uses the same JSON format as Fleasion, so you can import Fleasion configs directly with the import button
+next to **Configs**, or by dropping them into the `configs` folder (Settings > Open data folder).
 
 ```json
 {"replacement_rules": [
@@ -112,6 +112,7 @@ python run_interceptium.py
 
 # tests
 python -m unittest discover -s tests -v
+INTERCEPTIUM_GUI_TESTS=1 python -m unittest tests.test_gui -v   # needs a display
 
 # single-file executable
 pip install -r requirements-build.txt
@@ -132,3 +133,6 @@ to regenerate `assets/logo.ico`.
 ## License
 
 MIT. See [LICENSE](LICENSE).
+
+The bundled [Inter](https://rsms.me/inter/) font is licensed under the SIL Open Font License 1.1
+(`assets/fonts/OFL.txt`). It is loaded for Interceptium only and is not installed on your system.

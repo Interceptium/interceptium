@@ -16,24 +16,27 @@ from . import APP_NAME, __version__, roblox
 from .app import Controller
 from .logbus import log
 from .rules import MODE_LABELS, describe, iter_rules, parse_target_text, rule_mode
+from .ui import anim, fonts, gfx
 from .ui import theme as T
-from .ui.shapes import rounded
 from .ui.widgets import (
-    Card, IconButton, PowerButton, RoundButton, RoundEntry, ScrollArea, Segmented, StatusPill, Toggle,
-    Tooltip, chip_image,
+    Button, Card, Field, Host, IconButton, IconButtonC, PowerButton, ScrollArea, Segmented, StatusPill, Toggle,
+    ToggleC, install_wheel,
 )
 
 MAX_CARDS = 200
-MODE_COLORS = {"id": T.ACCENT, "remove": T.DANGER, "local": "#7aa7ff", "cdn": T.WARN}
+MODE_COLORS = {"id": T.ACCENT, "remove": T.DANGER, "local": T.BLUE, "cdn": T.WARN}
 
 
 def asset_path(name: str) -> Path:
     here = Path(__file__).resolve()
-    for base in (Path(getattr(sys, "_MEIPASS", "")), here.parent.parent.parent, here.parent):
+    bases = [here.parent.parent.parent, here.parent]
+    if getattr(sys, "_MEIPASS", None):
+        bases.insert(0, Path(sys._MEIPASS))  # type: ignore[attr-defined]
+    for base in bases:
         candidate = base / "assets" / name
         if candidate.exists():
             return candidate
-    return here.parent / "assets" / name
+    return bases[0] / "assets" / name
 
 
 def open_path(path: Path) -> None:
@@ -53,6 +56,14 @@ def label(parent: tk.Misc, text: str, size: int = 10, weight: str = "normal", co
     return tk.Label(parent, text=text, bg=parent.cget("bg"), fg=color, font=T.font(size, weight), **kw)
 
 
+def count_rules(entries: list) -> tuple[int, int]:
+    total = on = 0
+    for rule in iter_rules(entries):
+        total += 1
+        on += bool(rule.get("enabled", True))
+    return total, on
+
+
 # ---------------------------------------------------------------- dialogs --
 class Dialog(tk.Toplevel):
     def __init__(self, parent: tk.Misc, title: str, width: int = 460) -> None:
@@ -62,11 +73,24 @@ class Dialog(tk.Toplevel):
         self.configure(bg=T.SURFACE)
         self.resizable(False, False)
         self.transient(parent.winfo_toplevel())
-        self.body = tk.Frame(self, bg=T.SURFACE, padx=T.S(24), pady=T.S(22))
+        self.body = tk.Frame(self, bg=T.SURFACE, padx=T.S(26), pady=T.S(24))
         self.body.pack(fill="both", expand=True)
         self._width = T.S(width)
-        label(self.body, title, 15, "bold").pack(anchor="w", pady=(0, T.S(14)))
+        label(self.body, title, 15, "bold").pack(anchor="w", pady=(0, T.S(16)))
         self.bind("<Escape>", lambda _e: self.destroy())
+        self._jobs: list[str] = []
+
+    def later(self, ms: int, fn: Callable[[], None]) -> None:
+        self._jobs.append(self.after(ms, fn))
+
+    def destroy(self) -> None:
+        for job in self._jobs:
+            try:
+                self.after_cancel(job)
+            except tk.TclError:
+                pass
+        self._jobs.clear()
+        super().destroy()
 
     def show(self) -> None:
         self.update_idletasks()
@@ -83,21 +107,28 @@ class Dialog(tk.Toplevel):
 
     def buttons(self, ok_text: str, on_ok: Callable[[], None], kind: str = "primary") -> None:
         row = tk.Frame(self.body, bg=T.SURFACE)
-        row.pack(fill="x", pady=(T.S(18), 0))
-        RoundButton(row, ok_text, on_ok, kind=kind, height=38).pack(side="right")
-        RoundButton(row, "Cancel", self.destroy, kind="ghost", height=38).pack(side="right", padx=T.S(8))
+        row.pack(fill="x", pady=(T.S(22), 0))
+        Button(row, ok_text, on_ok, kind=kind).pack(side="right")
+        Button(row, "Cancel", self.destroy, kind="ghost").pack(side="right", padx=T.S(8))
         self.bind("<Return>", lambda _e: on_ok())
+
+    def field_label(self, text: str, parent: tk.Misc | None = None) -> tk.Label:
+        lab = label(parent or self.body, text, 9, "bold", T.MUTED)
+        lab.pack(anchor="w", pady=(T.S(12), T.S(6)))
+        return lab
 
 
 class PromptDialog(Dialog):
-    def __init__(self, parent: tk.Misc, title: str, message: str, value: str = "") -> None:
-        super().__init__(parent, title)
+    def __init__(self, parent: tk.Misc, title: str, value: str = "", ok: str = "Save") -> None:
+        super().__init__(parent, title, width=420)
         self.result: str | None = None
-        label(self.body, message, 10, color=T.MUTED, justify="left").pack(anchor="w", pady=(0, T.S(8)))
-        self.field = RoundEntry(self.body, value, width=400)
+        self.field = Field(self.body, value, "Name", width=368)
         self.field.pack(fill="x")
-        self.buttons("Save", self._ok)
-        self.after(50, self.field.entry.focus_set)
+        self.buttons(ok, self._ok)
+        self.later(60, self._focus)
+
+    def _focus(self) -> None:
+        self.field.entry.focus_set()
         self.field.entry.select_range(0, "end")
 
     def _ok(self) -> None:
@@ -108,9 +139,9 @@ class PromptDialog(Dialog):
 
 class ConfirmDialog(Dialog):
     def __init__(self, parent: tk.Misc, title: str, message: str, ok: str = "Delete") -> None:
-        super().__init__(parent, title)
+        super().__init__(parent, title, width=420)
         self.result = False
-        label(self.body, message, 10, color=T.MUTED, justify="left", wraplength=T.S(400)).pack(anchor="w")
+        label(self.body, message, 10, color=T.MUTED, justify="left", wraplength=T.S(368)).pack(anchor="w")
         self.buttons(ok, self._ok, kind="danger")
 
     def _ok(self) -> None:
@@ -119,6 +150,8 @@ class ConfirmDialog(Dialog):
 
 
 class RuleDialog(Dialog):
+    MODES = [("id", "Replace"), ("remove", "Remove"), ("local", "Local file")]
+
     def __init__(self, parent: tk.Misc, rule: dict | None, configs_folder: Path) -> None:
         super().__init__(parent, "Edit rule" if rule else "New rule", width=520)
         self.rule = rule
@@ -127,69 +160,69 @@ class RuleDialog(Dialog):
         rule = rule or {}
         mode = rule_mode(rule) if rule else "id"
 
-        def field_label(text: str) -> None:
-            label(self.body, text, 9, "bold", T.MUTED).pack(anchor="w", pady=(T.S(10), T.S(5)))
-
-        field_label("NAME")
-        self.name = RoundEntry(self.body, str(rule.get("name", "")), "e.g. Purple sky", width=470)
+        self.field_label("Name")
+        self.name = Field(self.body, str(rule.get("name", "")), width=468)
         self.name.pack(fill="x")
 
-        field_label("ASSETS TO CHANGE")
+        self.field_label("Assets")
         targets = " ".join(str(t) for t in rule.get("replace_ids", []) or [])
-        self.targets = RoundEntry(self.body, targets, "Asset IDs or types, e.g. 1234567 89012345 Image", width=470)
+        self.targets = Field(self.body, targets, "Asset IDs or types", width=468)
         self.targets.pack(fill="x")
 
-        field_label("ACTION")
-        self.mode = Segmented(self.body, [("id", "Replace"), ("remove", "Remove"), ("local", "Local file")],
-                              mode if mode != "cdn" else "remove", self._mode_changed, width=470)
+        self.field_label("Action")
+        self.mode = Segmented(self.body, self.MODES, mode if mode != "cdn" else "remove", self._mode_changed,
+                              width=468)
         self.mode.pack(anchor="w")
         if mode == "cdn":
-            label(self.body, "This rule used a CDN URL. Interceptium never contacts other servers, "
-                  "so pick another action.", 9, color=T.WARN, wraplength=T.S(460), justify="left").pack(
-                anchor="w", pady=(T.S(6), 0))
+            label(self.body, "CDN rules are not supported.", 9, color=T.WARN).pack(anchor="w", pady=(T.S(8), 0))
 
-        self.value_label = label(self.body, "", 9, "bold", T.MUTED)
-        self.value_label.pack(anchor="w", pady=(T.S(10), T.S(5)))
-        row = tk.Frame(self.body, bg=T.SURFACE)
+        self.value_box = tk.Frame(self.body, bg=T.SURFACE)
+        self.value_box.pack(fill="x")
+        self.value_label = self.field_label("", self.value_box)
+        row = tk.Frame(self.value_box, bg=T.SURFACE)
         row.pack(fill="x")
         start = ""
         if mode == "id" and rule.get("with_id") not in (None, ""):
             start = str(rule.get("with_id"))
         elif mode == "local":
             start = str(rule.get("local_path") or "")
-        self.value = RoundEntry(row, start, width=360)
+        self.value = Field(row, start, width=360)
         self.value.pack(side="left", fill="x", expand=True)
-        self.browse = RoundButton(row, "Browse", self._browse, kind="ghost", height=40)
-        self.browse.pack(side="left", padx=(T.S(8), 0))
+        self.browse = Button(row, "Browse", self._browse, kind="ghost", height=40)
+        self._browse_shown = False
 
-        en_row = tk.Frame(self.body, bg=T.SURFACE)
-        en_row.pack(fill="x", pady=(T.S(16), 0))
-        self.enabled = Toggle(en_row, bool(rule.get("enabled", True)))
+        self.anchor = tk.Frame(self.body, bg=T.SURFACE)
+        self.anchor.pack(fill="x")
+        en = tk.Frame(self.anchor, bg=T.SURFACE)
+        en.pack(fill="x", pady=(T.S(18), 0))
+        self.enabled = Toggle(en, bool(rule.get("enabled", True)))
         self.enabled.pack(side="left")
-        label(en_row, "Rule is on", 10).pack(side="left", padx=T.S(10))
-
-        self.error = label(self.body, "", 9, color=T.DANGER, wraplength=T.S(460), justify="left")
-        self.error.pack(anchor="w", pady=(T.S(8), 0))
-        self.buttons("Save rule", self._save)
+        label(en, "Enabled", 10).pack(side="left", padx=T.S(10))
+        self.error = label(self.anchor, "", 9, color=T.DANGER, wraplength=T.S(460), justify="left")
+        self.error.pack(anchor="w", pady=(T.S(10), 0))
+        self.buttons("Save", self._save)
         self._mode_changed(self.mode.value)
-        self.after(50, self.name.entry.focus_set)
+        self.later(60, self.name.entry.focus_set)
 
     def _mode_changed(self, mode: str) -> None:
         if mode == "remove":
-            self.value_label.configure(text="NOTHING ELSE NEEDED: THE ASSET WON'T LOAD")
-            self.value.set_enabled(False)
-            self.browse.set_enabled(False)
-        elif mode == "local":
-            self.value_label.configure(text="FILE TO USE INSTEAD")
-            self.value.set_enabled(True)
-            self.browse.set_enabled(True)
+            self.value_box.pack_forget()
         else:
-            self.value_label.configure(text="REPLACEMENT ASSET ID")
-            self.value.set_enabled(True)
-            self.browse.set_enabled(False)
+            self.value_box.pack(fill="x", before=self.anchor)
+            self.value_label.configure(text="File" if mode == "local" else "Replacement asset ID")
+        if mode == "local" and not self._browse_shown:
+            self.browse.pack(side="left", padx=(T.S(8), 0))
+            self._browse_shown = True
+        elif mode != "local" and self._browse_shown:
+            self.browse.pack_forget()
+            self._browse_shown = False
+        self.error.configure(text="")
+        if self.winfo_viewable():
+            self.update_idletasks()
+            self.geometry(f"{self.winfo_width()}x{self.winfo_reqheight()}")
 
     def _browse(self) -> None:
-        path = filedialog.askopenfilename(parent=self, title="Choose replacement file")
+        path = filedialog.askopenfilename(parent=self, title="Choose file")
         if path:
             self.value.var.set(path)
 
@@ -197,19 +230,20 @@ class RuleDialog(Dialog):
         try:
             targets = parse_target_text(self.targets.get())
             if not targets:
-                raise ValueError("Add at least one asset ID or type.")
+                raise ValueError("Enter at least one asset ID or type.")
             mode = self.mode.value
             value = self.value.get().strip()
             if mode == "id" and not (value.isdigit() and int(value) > 80):
-                raise ValueError("Enter the numeric ID of the replacement asset.")
+                raise ValueError("Enter a numeric replacement asset ID.")
             if mode == "local":
                 if not value:
                     raise ValueError("Choose a file.")
-                p = Path(value).expanduser()
-                if not value.startswith("/") or not (self.configs_folder / value.lstrip("/")).is_file():
+                portable = value.startswith("/") and (self.configs_folder / value.lstrip("/")).is_file()
+                if not portable:
+                    p = Path(value).expanduser()
                     if not p.is_file():
-                        raise ValueError("That file doesn't exist.")
-                    try:  # store files inside the configs folder in portable "/Folder/file" form
+                        raise ValueError("File not found.")
+                    try:  # files inside the configs folder are stored as portable "/Folder/file"
                         value = "/" + p.resolve().relative_to(self.configs_folder.resolve()).as_posix()
                     except ValueError:
                         value = str(p)
@@ -231,48 +265,33 @@ class RuleDialog(Dialog):
 
 class SettingsDialog(Dialog):
     def __init__(self, parent: tk.Misc, ctl: Controller) -> None:
-        super().__init__(parent, "Settings", width=500)
+        super().__init__(parent, "Settings", width=480)
         self.ctl = ctl
         s = ctl.config.settings
-
-        def toggle_row(title: str, sub: str, value: bool, cmd: Callable[[bool], None]) -> None:
-            card = Card(self.body, fill=T.CARD, radius=14, pad=14)
-            card.pack(fill="x", pady=T.S(4))
-            text = tk.Frame(card.body, bg=T.CARD)
-            text.pack(side="left", fill="x", expand=True)
-            label(text, title, 10, "bold").pack(anchor="w")
-            label(text, sub, 9, color=T.MUTED, wraplength=T.S(340), justify="left").pack(anchor="w")
-            Toggle(card.body, value, cmd).pack(side="right")
-
-        toggle_row("Clear cache when launching", "Roblox keeps downloaded assets. Clearing makes it fetch "
-                   "them again so your rules apply.", s.clear_cache_on_launch, self._set_clear)
-        toggle_row("Reroute website launches", "When you join a game from the website, restart Roblox "
-                   "through the proxy automatically.", s.auto_capture_launches, self._set_capture)
-
-        port_card = Card(self.body, fill=T.CARD, radius=14, pad=14)
-        port_card.pack(fill="x", pady=T.S(4))
-        text = tk.Frame(port_card.body, bg=T.CARD)
-        text.pack(side="left", fill="x", expand=True)
-        label(text, "Proxy port", 10, "bold").pack(anchor="w")
-        label(text, "Used on 127.0.0.1 only. Applies next start.", 9, color=T.MUTED).pack(anchor="w")
-        self.port = RoundEntry(port_card.body, str(s.port), width=90, height=36)
+        self._row("Clear cache on launch", Toggle, s.clear_cache_on_launch, self._set_clear)
+        self._row("Reroute website launches", Toggle, s.auto_capture_launches, self._set_capture)
+        port_body = self._row("Port", None, None, None)
+        self.port = Field(port_body, str(s.port), width=96, height=34)
         self.port.pack(side="right")
         self.port.var.trace_add("write", lambda *_: self._set_port())
 
         row = tk.Frame(self.body, bg=T.SURFACE)
-        row.pack(fill="x", pady=(T.S(14), 0))
-        RoundButton(row, "Open data folder", lambda: open_path(ctl.config.root), kind="ghost").pack(side="left")
-        RoundButton(row, "Remove from Roblox", self._uninstall, kind="danger").pack(side="left", padx=T.S(8))
+        row.pack(fill="x", pady=(T.S(16), 0))
+        Button(row, "Open data folder", lambda: open_path(ctl.config.root), kind="ghost").pack(side="left")
+        Button(row, "Remove from Roblox", self._uninstall, kind="danger").pack(side="left", padx=T.S(8))
 
-        safety = ("Safety: the proxy listens on 127.0.0.1 only, decrypts nothing except Roblox asset "
-                  "servers, never reads accounts, cookies or tokens, and never contacts other servers. "
-                  "Its certificate is limited to roblox.com and rbxcdn.com.")
-        label(self.body, safety, 9, color=T.FAINT, wraplength=T.S(450), justify="left").pack(
-            anchor="w", pady=(T.S(16), 0))
-        label(self.body, f"{APP_NAME} {__version__}", 9, color=T.FAINT).pack(anchor="w", pady=(T.S(6), 0))
-        close = tk.Frame(self.body, bg=T.SURFACE)
-        close.pack(fill="x", pady=(T.S(12), 0))
-        RoundButton(close, "Done", self.destroy, kind="primary").pack(side="right")
+        foot = tk.Frame(self.body, bg=T.SURFACE)
+        foot.pack(fill="x", pady=(T.S(22), 0))
+        label(foot, f"Version {__version__}", 9, color=T.FAINT).pack(side="left")
+        Button(foot, "Done", self.destroy, kind="primary").pack(side="right")
+
+    def _row(self, title: str, widget, value, command) -> tk.Frame:
+        card = Card(self.body, fill=T.CARD, radius=14, pad=14)
+        card.pack(fill="x", pady=T.S(4))
+        label(card.body, title, 10, "bold").pack(side="left")
+        if widget is not None:
+            widget(card.body, value, command).pack(side="right")
+        return card.body
 
     def _set_clear(self, v: bool) -> None:
         self.ctl.config.settings.clear_cache_on_launch = v
@@ -294,166 +313,198 @@ class SettingsDialog(Dialog):
             self.ctl.config.save()
 
     def _uninstall(self) -> None:
-        dlg = ConfirmDialog(self, "Remove from Roblox?", "This takes Interceptium's certificate and setting "
-                            "back out of every Roblox install. The proxy will stop working until you start it "
-                            "again.", ok="Remove")
+        dlg = ConfirmDialog(self, "Remove from Roblox",
+                            "The Interceptium certificate and setting will be removed from all Roblox installs.",
+                            ok="Remove")
         dlg.show()
         if dlg.result:
             threading.Thread(target=self.ctl.remove_from_roblox, daemon=True).start()
 
 
 # ------------------------------------------------------------ list items --
-class ConfigRow(tk.Canvas):
+class ConfigRow(Host):
     def __init__(self, parent: tk.Misc, name: str, count: int, enabled: bool, selected: bool,
                  on_select: Callable[[str], None], on_toggle: Callable[[str, bool], None]) -> None:
-        self._bg = parent.cget("bg")
-        self.h = T.S(54)
-        super().__init__(parent, height=self.h, bg=self._bg, highlightthickness=0, bd=0, cursor="hand2")
-        self.name, self.selected = name, selected
-        self._hover = False
-        self._img = self.create_image(0, 0, anchor="nw")
-        self._dot = self.create_image(T.S(14), self.h / 2 - T.S(4), anchor="nw")
-        self._title = self.create_text(T.S(30), T.S(19), anchor="w", text=name, font=T.font(10, "bold"))
+        self.h = T.S(52)
+        super().__init__(parent, T.S(240), self.h)
+        self.name, self.count, self.selected = name, count, selected
+        self.on_select, self.on_toggle = on_select, on_toggle
+        self.hover = 0.0
+        self.w = 0
+        self._outline = self.create_image(0, 0, anchor="nw")
+        self._bg = self.create_image(0, 0, anchor="nw")
+        self._title = self.create_text(T.S(16), T.S(18), anchor="w", font=T.font(10, "bold"), fill=T.TEXT)
         noun = "rule" if count == 1 else "rules"
-        self._sub = self.create_text(T.S(30), T.S(36), anchor="w", text=f"{count} {noun}", font=T.font(8),
-                                     fill=T.MUTED)
-        self.toggle = Toggle(self, enabled, lambda v: on_toggle(name, v), width=40, height=22)
-        self._win = self.create_window(0, self.h / 2, window=self.toggle, anchor="e")
-        self.enabled = enabled
-        for seq, fn in (("<Enter>", lambda _e: self._set_hover(True)), ("<Leave>", lambda _e: self._set_hover(False)),
-                        ("<ButtonRelease-1>", lambda _e: on_select(name))):
-            self.bind(seq, fn)
-        self.bind("<Configure>", lambda _e: self._paint())
+        self.create_text(T.S(16), T.S(35), anchor="w", font=T.font(9), fill=T.MUTED, text=f"{count} {noun}")
+        self.toggle = ToggleC(self, 0, (self.h - T.S(22)) // 2, enabled, self._toggled)
+        self.bind("<Enter>", lambda _e: self._fade(1.0))
+        self.bind("<Leave>", lambda _e: self._fade(0.0))
+        self.bind("<ButtonRelease-1>", self._click)
+        self.bind("<Configure>", self._resize)
 
-    def _set_hover(self, v: bool) -> None:
-        self._hover = v
-        self._paint()
+    def _toggled(self, value: bool) -> None:
+        self.on_toggle(self.name, value)
 
-    def _paint(self) -> None:
-        w = self.winfo_width()
-        if w < 10:
+    def _click(self, e: tk.Event) -> None:
+        over = self.find_overlapping(e.x, e.y, e.x, e.y)
+        if any(self.toggle.tag in self.gettags(item) for item in over):
             return
-        fill = T.CARD_SELECTED if self.selected else (T.CARD_HOVER if self._hover else self._bg)
-        self._p = rounded(w, self.h, T.S(14), fill, self._bg, T.mix(T.ACCENT, fill, 0.55) if self.selected else None,
-                          T.S(1) if self.selected else 0)
-        self.itemconfigure(self._img, image=self._p)
-        dot_color = T.ACCENT if self.toggle.value else T.FAINT
-        self._d = rounded(T.S(8), T.S(8), T.S(4), dot_color, fill)
-        self.itemconfigure(self._dot, image=self._d)
-        self.itemconfigure(self._title, fill=T.TEXT)
-        self.toggle.configure(bg=fill)
-        self.toggle._bg = fill
-        self.toggle._paint()
-        self.coords(self._win, w - T.S(12), self.h / 2)
-        max_w = w - T.S(30) - T.S(70)
-        f = T.font(10, "bold")
-        text = self.name
-        while f.measure(text) > max_w and len(text) > 3:
-            text = text[:-2]
-        self.itemconfigure(self._title, text=text if text == self.name else text + "…")
+        self.on_select(self.name)
+
+    def _fade(self, target: float) -> None:
+        start = self.hover
+
+        def step(v: float) -> None:
+            self.hover = start + (target - start) * v
+            self._draw()
+
+        anim.get().tween((self, "h"), 0.14, step)
+
+    def _resize(self, e: tk.Event) -> None:
+        if e.width != self.w:
+            self.w = e.width
+            self.toggle.move(self.w - self.toggle.w - T.S(14), self.toggle.y)
+            self._draw()
+
+    def _draw(self) -> None:
+        if self.w < 20:
+            return
+        r = T.S(14)
+        mask = gfx.rrect(self.w, self.h, r)
+        if self.selected:
+            b = max(1, T.S(1))
+            self.itemconfigure(self._outline, image=gfx.image(mask, gfx.mix(T.ACCENT, T.SURFACE, 0.55)),
+                               state="normal")
+            self.itemconfigure(self._bg, image=gfx.image(gfx.rrect(self.w - 2 * b, self.h - 2 * b, r - b),
+                                                         T.CARD_SELECTED))
+            self.coords(self._bg, b, b)
+        else:
+            self.itemconfigure(self._outline, state="hidden")
+            self.itemconfigure(self._bg, image=gfx.image(mask, T.CARD_HOVER, self.hover))
+            self.coords(self._bg, 0, 0)
+        width = self.w - T.S(16) - self.toggle.w - T.S(26)
+        self.itemconfigure(self._title, text=T.elide(self.name, T.font(10, "bold"), width))
 
 
-class RuleCard(tk.Canvas):
+class GroupRow(Host):
+    def __init__(self, parent: tk.Misc, name: str, count: int, collapsed: bool, indent: int,
+                 on_click: Callable[[], None]) -> None:
+        self.h = T.S(38)
+        super().__init__(parent, T.S(300), self.h, cursor="hand2")
+        x = indent + T.S(8)
+        icon = "chevron_right" if collapsed else "chevron"
+        self.create_image(x + T.S(8), self.h / 2, anchor="center", image=gfx.icon(icon, T.S(16), T.MUTED))
+        title = self.create_text(x + T.S(24), self.h / 2, anchor="w", text=name, font=T.font(10, "bold"),
+                                 fill=T.MUTED)
+        bbox = self.bbox(title)
+        self.create_text((bbox[2] if bbox else x + T.S(80)) + T.S(10), self.h / 2, anchor="w", text=str(count),
+                         font=T.font(9), fill=T.FAINT)
+        self.bind("<ButtonRelease-1>", lambda _e: on_click())
+
+
+class RuleCard(Host):
     def __init__(self, parent: tk.Misc, rule: dict, on_toggle: Callable[[dict, bool], None],
                  on_edit: Callable[[dict], None], on_delete: Callable[[dict], None], indent: int = 0) -> None:
-        self._bg = parent.cget("bg")
-        self.h = T.S(76)
-        super().__init__(parent, height=self.h, bg=self._bg, highlightthickness=0, bd=0)
+        self.h = T.S(74)
+        super().__init__(parent, T.S(600), self.h)
         self.rule = rule
         self.indent = indent
-        self._hover = False
-        self._img = self.create_image(indent, 0, anchor="nw")
-        self.toggle = Toggle(self, bool(rule.get("enabled", True)), lambda v: on_toggle(rule, v))
-        self._t_win = self.create_window(indent + T.S(18), self.h / 2, window=self.toggle, anchor="w")
-        self.edit_btn = IconButton(self, "✎", lambda: on_edit(rule), kind="subtle", size=34)
-        self.del_btn = IconButton(self, "✕", lambda: on_delete(rule), kind="subtle", size=34, font_size=10)
-        Tooltip(self.edit_btn, "Edit rule")
-        Tooltip(self.del_btn, "Delete rule")
-        self._e_win = self.create_window(0, self.h / 2, window=self.edit_btn, anchor="e")
-        self._d_win = self.create_window(0, self.h / 2, window=self.del_btn, anchor="e")
+        self.hover = 0.0
+        self.w = 0
+        self.gap = T.S(4)
+        self._bg = self.create_image(indent, self.gap, anchor="nw")
+        self.toggle = ToggleC(self, indent + T.S(18), (self.h - T.S(22)) // 2, bool(rule.get("enabled", True)),
+                              lambda v: on_toggle(rule, v))
+        size = 34
+        y = (self.h - T.S(size)) // 2
+        self.edit_btn = IconButtonC(self, 0, y, "edit", lambda: on_edit(rule), size=size)
+        self.del_btn = IconButtonC(self, 0, y, "close", lambda: on_delete(rule), size=size)
         self._items: list[int] = []
-        self._chips: list[tk.PhotoImage] = []
-        self.bind("<Configure>", lambda _e: self._paint())
-        self.bind("<Enter>", lambda _e: self._set_hover(True))
-        self.bind("<Leave>", lambda _e: self._set_hover(False))
-        self.bind("<Double-Button-1>", lambda _e: on_edit(rule))
+        self.bind("<Configure>", self._resize)
+        self.bind("<Enter>", lambda _e: self._fade(1.0))
+        self.bind("<Leave>", lambda _e: self._fade(0.0))
+        self.on_edit = on_edit
+        self.bind("<Double-Button-1>", self._double)
 
-    def _set_hover(self, v: bool) -> None:
-        self._hover = v
-        self._paint()
+    def _double(self, e: tk.Event) -> None:
+        tags = {self.toggle.tag, self.edit_btn.tag, self.del_btn.tag}
+        for item in self.find_overlapping(e.x, e.y, e.x, e.y):
+            if tags & set(self.gettags(item)):
+                return
+        self.on_edit(self.rule)
 
-    def _paint(self) -> None:
-        w = self.winfo_width()
-        if w < 50:
+    def _fade(self, target: float) -> None:
+        start = self.hover
+
+        def step(v: float) -> None:
+            self.hover = start + (target - start) * v
+            self._draw_bg()
+
+        anim.get().tween((self, "h"), 0.14, step)
+
+    def _resize(self, e: tk.Event) -> None:
+        if e.width != self.w:
+            self.w = e.width
+            self._layout()
+
+    def _draw_bg(self) -> None:
+        if self.w < 60:
             return
-        x0 = self.indent
-        cw = w - x0
-        fill = T.CARD_HOVER if self._hover else T.CARD
-        self._p = rounded(cw, self.h - T.S(8), T.S(16), fill, self._bg)
-        self.itemconfigure(self._img, image=self._p)
-        self.coords(self._img, x0, T.S(4))
-        for widget in (self.toggle, self.edit_btn, self.del_btn):
-            widget.configure(bg=fill)
-            widget._bg = fill
-            widget._paint()
-        self.coords(self._t_win, x0 + T.S(18), self.h / 2)
-        self.coords(self._d_win, w - T.S(14), self.h / 2)
-        self.coords(self._e_win, w - T.S(14) - T.S(40), self.h / 2)
-        for item in self._items:
-            self.delete_item(item)
-        self._items.clear()
-        self._chips.clear()
+        fill = gfx.mix(T.CARD, T.CARD_HOVER, self.hover)
+        mask = gfx.rrect(self.w - self.indent, self.h - 2 * self.gap, T.S(16))
+        self.itemconfigure(self._bg, image=gfx.image(mask, fill))
 
+    def _chip(self, x: float, y: float, text: str, fill: str, fg: str, bold: bool = False) -> int:
+        f = T.font(9, "bold" if bold else "normal")
+        w, h = f.measure(text) + T.S(18), T.S(22)
+        self._items.append(self.create_image(round(x), round(y), anchor="nw",
+                                             image=gfx.image(gfx.rrect(w, h, h / 2), fill)))
+        self._items.append(self.create_text(round(x + w / 2), round(y + h / 2), text=text, font=f, fill=fg))
+        return w
+
+    def _layout(self) -> None:
+        if self.w < 60:
+            return
+        self._draw_bg()
+        for item in self._items:
+            self.delete(item)
+        self._items.clear()
         enabled = bool(self.rule.get("enabled", True))
         mode = rule_mode(self.rule)
-        text_x = x0 + T.S(76)
-        right_limit = w - T.S(110)
-        # mode badge on the right
-        badge_text = MODE_LABELS[mode]
-        color = MODE_COLORS[mode]
-        img, bw, bh = chip_image(badge_text, T.mix(color, fill, 0.82), fill, 9)
-        self._chips.append(img)
-        bx = right_limit - bw
-        self._items.append(self.create_image(bx, T.S(16), image=img, anchor="nw"))
-        self._items.append(self.create_text(bx + bw / 2, T.S(16) + bh / 2, text=badge_text,
-                                            font=T.font(9, "bold"), fill=color))
-        desc = describe(self.rule) if mode != "cdn" else "skipped"
-        self._items.append(self.create_text(right_limit, T.S(52), text=desc, anchor="e", font=T.font(9),
-                                            fill=T.MUTED))
-        # name
-        name = str(self.rule.get("name") or "Untitled rule")
-        f = T.font(11, "bold")
-        max_name = bx - text_x - T.S(12)
-        shown = name
-        while f.measure(shown) > max_name and len(shown) > 3:
-            shown = shown[:-2]
-        if shown != name:
-            shown += "…"
-        self._items.append(self.create_text(text_x, T.S(27), text=shown, anchor="w", font=f,
-                                            fill=T.TEXT if enabled else T.FAINT))
-        # target chips
-        targets = [str(t) for t in self.rule.get("replace_ids", []) or []]
-        x = text_x
-        limit = right_limit - T.S(150)
-        for i, t in enumerate(targets):
-            rest = len(targets) - i
-            img, cw2, ch = chip_image(t, T.CHIP, fill)
-            if x + cw2 > limit and rest > 0:
-                more = f"+{rest}"
-                img, cw2, ch = chip_image(more, T.CHIP, fill)
-                self._chips.append(img)
-                self._items.append(self.create_image(x, T.S(41), image=img, anchor="nw"))
-                self._items.append(self.create_text(x + cw2 / 2, T.S(41) + ch / 2, text=more,
-                                                    font=T.font(9), fill=T.MUTED))
-                break
-            self._chips.append(img)
-            self._items.append(self.create_image(x, T.S(41), image=img, anchor="nw"))
-            self._items.append(self.create_text(x + cw2 / 2, T.S(41) + ch / 2, text=t, font=T.font(9),
-                                                fill=T.MUTED if enabled else T.FAINT))
-            x += cw2 + T.S(6)
 
-    def delete_item(self, item: int) -> None:
-        tk.Canvas.delete(self, item)
+        right = self.w - T.S(14)
+        self.del_btn.move(right - self.del_btn.d, self.del_btn.y)
+        self.edit_btn.move(right - self.del_btn.d - T.S(4) - self.edit_btn.d, self.edit_btn.y)
+        right = right - 2 * self.del_btn.d - T.S(20)
+
+        color = MODE_COLORS[mode]
+        badge = MODE_LABELS[mode]
+        bw = T.font(9, "bold").measure(badge) + T.S(18)
+        self._chip(right - bw, T.S(14), badge, gfx.mix(color, T.CARD, 0.84), color, bold=True)
+        detail = describe(self.rule)
+        if detail:
+            df = T.font(9)
+            self._items.append(self.create_text(right, T.S(52), text=T.elide(detail, df, T.S(180)), anchor="e",
+                                                font=df, fill=T.MUTED))
+
+        x = self.indent + T.S(74)
+        nf = T.font(11, "bold")
+        name = str(self.rule.get("name") or "Untitled")
+        self._items.append(self.create_text(x, T.S(26), anchor="w", font=nf, fill=T.TEXT if enabled else T.FAINT,
+                                            text=T.elide(name, nf, max(40, right - bw - x - T.S(16)))))
+        targets = [str(t) for t in self.rule.get("replace_ids", []) or []]
+        limit = right - T.S(200)
+        cf = T.font(9)
+        for i, t in enumerate(targets):
+            w = cf.measure(t) + T.S(18)
+            more = f"+{len(targets) - i}"
+            reserve = cf.measure(more) + T.S(24) if i < len(targets) - 1 else 0
+            if x + w + reserve > limit and i > 0:
+                self._chip(x, T.S(40), more, T.CHIP, T.MUTED)
+                break
+            x += self._chip(x, T.S(40), t, T.CHIP, T.MUTED if enabled else T.FAINT) + T.S(6)
+        for comp in (self.toggle, self.edit_btn, self.del_btn):
+            self.tag_raise(comp.tag)
 
 
 # ------------------------------------------------------------ main window --
@@ -469,18 +520,19 @@ class MainWindow:
         self.selected: str = enabled[0] if enabled else names[0]
         self.data: dict = self.store.load_config(self.selected)
         self.show_all = False
+        self.collapsed: set[int] = set()
 
         root.title(APP_NAME)
         root.configure(bg=T.BG)
         root.geometry(f"{T.S(1140)}x{T.S(800)}")
-        root.minsize(T.S(940), T.S(620))
+        root.minsize(T.S(960), T.S(640))
         self._set_icons()
+        install_wheel(root)
 
         shell = tk.Frame(root, bg=T.BG, padx=T.S(20), pady=T.S(16))
         shell.pack(fill="both", expand=True)
         shell.columnconfigure(1, weight=1)
         shell.rowconfigure(1, weight=1)
-
         self._build_header(shell)
         self._build_sidebar(shell)
         self._build_rules(shell)
@@ -489,17 +541,19 @@ class MainWindow:
         self.refresh_configs()
         self.refresh_rules()
         root.protocol("WM_DELETE_WINDOW", self.on_close)
-        root.after(150, self._pump_log)
-        log.emit("App", f"{APP_NAME} {__version__} ready. Press the round button to start")
+        self.ui_calls: queue.Queue[Callable[[], None]] = queue.Queue()
+        self._pump_job: str | None = root.after(50, self._pump_log)
+        log.emit("App", f"{APP_NAME} {__version__}")
 
     # -- layout -----------------------------------------------------------
     def _set_icons(self) -> None:
+        self._logo = None
         try:
             self._logo_big = tk.PhotoImage(file=str(asset_path("logo.png")))
             self.root.iconphoto(True, self._logo_big)
-            self._logo = tk.PhotoImage(file=str(asset_path("logo_48.png")))
+            self._logo = tk.PhotoImage(file=str(asset_path("logo_48.png" if T.S(1) < 2 else "logo_96.png")))
         except tk.TclError:
-            self._logo = None
+            pass
         if sys.platform == "win32":
             try:
                 self.root.iconbitmap(default=str(asset_path("logo.ico")))
@@ -508,16 +562,11 @@ class MainWindow:
 
     def _build_header(self, shell: tk.Frame) -> None:
         head = tk.Frame(shell, bg=T.BG)
-        head.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, T.S(14)))
+        head.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, T.S(16)))
         if self._logo is not None:
             tk.Label(head, image=self._logo, bg=T.BG).pack(side="left", padx=(0, T.S(12)))
-        titles = tk.Frame(head, bg=T.BG)
-        titles.pack(side="left")
-        label(titles, APP_NAME, 19, "bold").pack(anchor="w")
-        label(titles, "Local Roblox asset proxy · nothing leaves your PC", 9, color=T.MUTED).pack(anchor="w")
-        gear = IconButton(head, "⚙", self.open_settings, kind="ghost", size=38, font_size=13)
-        gear.pack(side="right")
-        Tooltip(gear, "Settings")
+        label(head, APP_NAME, 18, "bold").pack(side="left")
+        IconButton(head, "settings", self.open_settings, kind="ghost", size=38, icon_size=18).pack(side="right")
         self.status = StatusPill(head)
         self.status.pack(side="right", padx=T.S(12))
 
@@ -527,36 +576,28 @@ class MainWindow:
         side.grid_propagate(False)
         side.pack_propagate(False)
 
-        proxy = Card(side, fill=T.SURFACE, radius=22, pad=18)
+        proxy = Card(side, fill=T.SURFACE, radius=22, pad=16)
         proxy.pack(fill="x")
-        self.power = PowerButton(proxy.body, self.toggle_proxy, size=124)
-        self.power.pack(pady=(T.S(2), T.S(8)))
-        self.proxy_line = label(proxy.body, "Proxy is off", 9, color=T.MUTED)
-        self.proxy_line.pack()
-        btns = tk.Frame(proxy.body, bg=T.SURFACE)
-        btns.pack(fill="x", pady=(T.S(12), 0))
-        RoundButton(btns, "▶  Launch Roblox", self.launch, kind="primary", width=250, height=40).pack()
-        RoundButton(btns, "Clear Roblox cache", self.clear_cache, kind="ghost", width=250, height=36).pack(
-            pady=(T.S(8), 0))
+        self.power = PowerButton(proxy.body, self.toggle_proxy, size=132)
+        self.power.pack()
+        self.address = label(proxy.body, self.ctl.proxy_url.removeprefix("http://"), 9, color=T.FAINT)
+        self.address.pack(pady=(0, T.S(14)))
+        Button(proxy.body, "Launch Roblox", self.launch, kind="primary", icon="play", width=252, height=40).pack()
+        Button(proxy.body, "Clear cache", self.clear_cache, kind="ghost", width=252, height=38).pack(pady=(T.S(8), 0))
 
-        configs = Card(side, fill=T.SURFACE, radius=22, pad=14, fill_height=True)
-        configs.pack(fill="both", expand=True, pady=(T.S(14), 0))
+        configs = Card(side, fill=T.SURFACE, radius=22, pad=14)
+        configs.pack(fill="both", expand=True, pady=(T.S(16), 0))
         top = tk.Frame(configs.body, bg=T.SURFACE)
-        top.pack(fill="x", pady=(0, T.S(8)))
+        top.pack(fill="x", pady=(0, T.S(10)))
         label(top, "Configs", 12, "bold").pack(side="left", padx=(T.S(4), 0))
-        for glyph, tip, cmd, kind in (("+", "New config", self.new_config, "primary"),
-                                      ("↓", "Import Fleasion / Interceptium configs", self.import_config, "ghost"),
-                                      ("⋯", "Open configs folder", lambda: open_path(self.store.folder), "ghost")):
-            btn = IconButton(top, glyph, cmd, kind=kind, size=30, font_size=12)
-            btn.pack(side="right", padx=(T.S(6), 0))
-            Tooltip(btn, tip)
-        label(configs.body, "Switch on every config you want to run.", 8, color=T.FAINT).pack(
-            anchor="w", padx=T.S(4), pady=(0, T.S(6)))
+        IconButton(top, "plus", self.new_config, kind="primary", size=30, icon_size=16).pack(side="right")
+        IconButton(top, "import", self.import_config, kind="ghost", size=30, icon_size=16).pack(
+            side="right", padx=T.S(6))
         self.config_list = ScrollArea(configs.body, T.SURFACE)
         self.config_list.pack(fill="both", expand=True)
 
     def _build_rules(self, shell: tk.Frame) -> None:
-        panel = Card(shell, fill=T.SURFACE, radius=22, pad=20, fill_height=True)
+        panel = Card(shell, fill=T.SURFACE, radius=22, pad=20)
         panel.grid(row=1, column=1, sticky="nsew")
         head = tk.Frame(panel.body, bg=T.SURFACE)
         head.pack(fill="x")
@@ -566,57 +607,60 @@ class MainWindow:
         self.config_title.pack(anchor="w", fill="x")
         self.config_sub = label(titles, "", 9, color=T.MUTED, anchor="w")
         self.config_sub.pack(anchor="w")
-        RoundButton(head, "Delete", self.delete_config, kind="danger", height=32, size=9).pack(side="right")
-        RoundButton(head, "Export", self.export_config, kind="ghost", height=32, size=9).pack(
-            side="right", padx=T.S(6))
-        RoundButton(head, "Rename", self.rename_config, kind="ghost", height=32, size=9).pack(side="right")
-        RoundButton(head, "+  Add rule", self.add_rule, kind="primary", height=38).pack(side="right", padx=T.S(12))
+        Button(head, "Delete", self.delete_config, kind="danger", height=34, size=9).pack(side="right")
+        Button(head, "Export", self.export_config, kind="ghost", height=34, size=9).pack(side="right", padx=T.S(6))
+        Button(head, "Rename", self.rename_config, kind="ghost", height=34, size=9).pack(side="right")
+        Button(head, "Add rule", self.add_rule, kind="primary", icon="plus", height=38).pack(
+            side="right", padx=T.S(12))
 
-        self.search = RoundEntry(panel.body, "", "Search rules by name, ID or type…", width=500, height=38)
-        self.search.pack(fill="x", pady=(T.S(14), T.S(10)))
+        self.search = Field(panel.body, "", "Search", width=500, height=40, icon="search")
+        self.search.pack(fill="x", pady=(T.S(16), T.S(10)))
         self.search.var.trace_add("write", lambda *_: self._search_changed())
         self.rule_list = ScrollArea(panel.body, T.SURFACE)
         self.rule_list.pack(fill="both", expand=True)
 
     def _build_log(self, shell: tk.Frame) -> None:
         card = Card(shell, fill=T.SURFACE, radius=18, pad=14)
-        card.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(T.S(14), 0))
+        card.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(T.S(16), 0))
         top = tk.Frame(card.body, bg=T.SURFACE)
         top.pack(fill="x")
-        label(top, "Activity", 10, "bold").pack(side="left", padx=(T.S(4), 0))
-        self.log_toggle = RoundButton(top, "Hide", self._toggle_log, kind="subtle", height=26, size=8)
+        label(top, "Log", 10, "bold").pack(side="left", padx=(T.S(4), 0))
+        self.log_toggle = Button(top, "Hide", self._toggle_log, kind="ghost", height=26, size=8, width=64)
         self.log_toggle.pack(side="right")
         self.log_wrap = tk.Frame(card.body, bg=T.SURFACE)
         self.log_wrap.pack(fill="x", pady=(T.S(8), 0))
         self.log_text = tk.Text(self.log_wrap, height=4, bg=T.SURFACE, fg=T.MUTED, bd=0, highlightthickness=0,
-                                font=("Consolas" if sys.platform == "win32" else "Menlo" if sys.platform == "darwin"
-                                      else "DejaVu Sans Mono", 9), wrap="word", state="disabled",
-                                padx=T.S(4), selectbackground=T.CARD_HOVER)
+                                font=T.font(9, mono=True), wrap="word", state="disabled", padx=T.S(4),
+                                selectbackground=T.CARD_HOVER, cursor="arrow")
         self.log_text.pack(fill="x")
-        for tag, color in (("Replace", T.ACCENT), ("Remove", T.DANGER), ("Error", T.DANGER),
-                           ("File", "#7aa7ff"), ("Proxy", T.TEXT), ("Watcher", T.WARN), ("time", T.FAINT)):
+        for tag, color in (("Replace", T.ACCENT), ("Remove", T.DANGER), ("Error", T.DANGER), ("File", T.BLUE),
+                           ("Proxy", T.TEXT), ("Watcher", T.WARN), ("time", T.FAINT)):
             self.log_text.tag_configure(tag, foreground=color)
 
     def _toggle_log(self) -> None:
         if self.log_wrap.winfo_ismapped():
             self.log_wrap.pack_forget()
-            self.log_toggle.configure_text("Show")
+            self.log_toggle.set_text("Show")
         else:
             self.log_wrap.pack(fill="x", pady=(T.S(8), 0))
-            self.log_toggle.configure_text("Hide")
+            self.log_toggle.set_text("Hide")
 
     # -- background work -------------------------------------------------
     def _bg(self, fn: Callable[[], object], done: Callable[[], None] | None = None) -> None:
+        """Run ``fn`` on a worker thread; ``done`` then runs on the UI thread."""
         def work() -> None:
             try:
                 fn()
             except Exception as exc:
                 log.emit("Error", str(exc))
             if done:
-                self.root.after(0, done)
+                self.ui_calls.put(done)  # never touch Tk from a worker thread
         threading.Thread(target=work, daemon=True).start()
 
     def _pump_log(self) -> None:
+        self._pump_job = None
+        while not self.ui_calls.empty():
+            self.ui_calls.get_nowait()()
         lines = []
         while not self.lines.empty():
             lines.append(self.lines.get_nowait())
@@ -631,25 +675,35 @@ class MainWindow:
                 self.log_text.delete("1.0", "500.0")
             self.log_text.see("end")
             self.log_text.configure(state="disabled")
-        self.root.after(150, self._pump_log)
+        self._pump_job = self.root.after(50, self._pump_log)
 
     # -- proxy -------------------------------------------------------------
+    def _busy(self, text: str) -> None:
+        self.power.set_state(self.ctl.running, busy=True)
+        self.status.set(text, T.WARN, pulse=True)
+
     def _update_status(self) -> None:
         running = self.ctl.running
         self.power.set_state(running)
+        self.address.configure(text=self.ctl.proxy_url.removeprefix("http://"))
         if running:
-            self.status.set(f"Running · {self.ctl.proxy_url.removeprefix('http://')}", T.ACCENT)
-            self.proxy_line.configure(text=f"Listening on {self.ctl.proxy_url.removeprefix('http://')}")
+            self.status.set("Running", T.ACCENT, pulse=True)
         else:
-            self.status.set("Stopped", T.DANGER)
-            self.proxy_line.configure(text="Proxy is off")
+            self.status.set("Stopped", T.MUTED)
+
+    def status_text(self) -> str:
+        return str(self.status.itemcget(self.status._tx, "text"))
 
     def toggle_proxy(self) -> None:
-        self.power.set_state(self.ctl.running, busy=True)
-        self._bg(self.ctl.stop if self.ctl.running else self.ctl.start, self._update_status)
+        if self.ctl.running:
+            self._busy("Stopping")
+            self._bg(self.ctl.stop, self._update_status)
+        else:
+            self._busy("Starting")
+            self._bg(self.ctl.start, self._update_status)
 
     def launch(self) -> None:
-        self.power.set_state(self.ctl.running, busy=True)
+        self._busy("Launching")
         self._bg(self.ctl.launch_roblox, self._update_status)
 
     def clear_cache(self) -> None:
@@ -657,26 +711,27 @@ class MainWindow:
 
     def open_settings(self) -> None:
         SettingsDialog(self.root, self.ctl).show()
+        self.address.configure(text=self.ctl.proxy_url.removeprefix("http://"))
 
     # -- configs -----------------------------------------------------------
     def refresh_configs(self) -> None:
+        y = self.config_list.pos
         for child in self.config_list.inner.winfo_children():
             child.destroy()
         for name in self.store.names():
             data = self.data if name == self.selected else self.store.load_config(name)
-            count = sum(1 for _ in iter_rules(data["replacement_rules"]))
-            row = ConfigRow(self.config_list.inner, name, count, self.store.is_enabled(name), name == self.selected,
-                            self.select_config, self.toggle_config)
-            row.pack(fill="x", pady=T.S(2))
-            self.config_list.bind_all_wheel(row)
+            total, _on = count_rules(data["replacement_rules"])
+            ConfigRow(self.config_list.inner, name, total, self.store.is_enabled(name), name == self.selected,
+                      self.select_config, self.toggle_config).pack(fill="x", pady=T.S(2))
+        self.root.update_idletasks()
+        self.config_list.to(y)
         self._update_header()
 
     def _update_header(self) -> None:
-        total = sum(1 for _ in iter_rules(self.data["replacement_rules"]))
-        on = sum(1 for r in iter_rules(self.data["replacement_rules"]) if r.get("enabled", True))
-        state = "running" if self.store.is_enabled(self.selected) else "switched off"
+        total, on = count_rules(self.data["replacement_rules"])
         self.config_title.configure(text=self.selected)
-        self.config_sub.configure(text=f"{total} rules · {on} on · config is {state}")
+        noun = "rule" if total == 1 else "rules"
+        self.config_sub.configure(text=f"{total} {noun}, {on} enabled")
 
     def select_config(self, name: str) -> None:
         if name == self.selected:
@@ -684,18 +739,18 @@ class MainWindow:
         self.selected = name
         self.data = self.store.load_config(name)
         self.show_all = False
+        self.collapsed.clear()
         self.search.var.set("")
         self.refresh_configs()
         self.refresh_rules()
-        self.rule_list.to_top()
+        self.rule_list.to(0)
 
     def toggle_config(self, name: str, value: bool) -> None:
         self.store.set_enabled(name, value)
-        log.emit("Configs", f"{name} {'on' if value else 'off'}. Clear the Roblox cache to see changes")
-        self.root.after(220, self.refresh_configs)
+        log.emit("Configs", f"{name} {'enabled' if value else 'disabled'}")
 
     def new_config(self) -> None:
-        dlg = PromptDialog(self.root, "New config", "Give your config a name.")
+        dlg = PromptDialog(self.root, "New config", ok="Create")
         dlg.show()
         if dlg.result:
             try:
@@ -708,8 +763,8 @@ class MainWindow:
             self.select_config(name)
 
     def import_config(self) -> None:
-        paths = filedialog.askopenfilenames(parent=self.root, title="Import Fleasion / Interceptium configs",
-                                            filetypes=[("JSON config", "*.json"), ("All files", "*.*")])
+        paths = filedialog.askopenfilenames(parent=self.root, title="Import configs",
+                                            filetypes=[("JSON", "*.json"), ("All files", "*.*")])
         last = None
         for path in paths:
             try:
@@ -722,7 +777,7 @@ class MainWindow:
             self.select_config(last)
 
     def rename_config(self) -> None:
-        dlg = PromptDialog(self.root, "Rename config", "New name:", self.selected)
+        dlg = PromptDialog(self.root, "Rename config", self.selected)
         dlg.show()
         if dlg.result:
             try:
@@ -735,12 +790,14 @@ class MainWindow:
         dest = filedialog.asksaveasfilename(parent=self.root, title="Export config", defaultextension=".json",
                                             initialfile=f"{self.selected}.json", filetypes=[("JSON", "*.json")])
         if dest:
-            self.store.export(self.selected, Path(dest))
-            log.emit("Configs", f"exported {self.selected}")
+            try:
+                self.store.export(self.selected, Path(dest))
+                log.emit("Configs", f"exported {self.selected}")
+            except OSError as exc:
+                log.emit("Error", str(exc))
 
     def delete_config(self) -> None:
-        dlg = ConfirmDialog(self.root, f"Delete “{self.selected}”?",
-                            "The config file and all its rules will be deleted. This can't be undone.")
+        dlg = ConfirmDialog(self.root, "Delete config", f'"{self.selected}" will be permanently deleted.')
         dlg.show()
         if not dlg.result:
             return
@@ -753,17 +810,26 @@ class MainWindow:
 
     # -- rules ---------------------------------------------------------------
     def _save(self) -> None:
-        self.store.save_config(self.selected, self.data)
+        try:
+            self.store.save_config(self.selected, self.data)
+        except OSError as exc:
+            log.emit("Error", f"could not save: {exc}")
         self._update_header()
 
     def _search_changed(self) -> None:
-        if hasattr(self, "_search_job"):
-            self.root.after_cancel(self._search_job)
-        self._search_job = self.root.after(180, self.refresh_rules)
+        job = getattr(self, "_search_job", None)
+        if job:
+            self.root.after_cancel(job)
+        self._search_job = self.root.after(160, self._search_now)
 
-    def _visible_items(self) -> list[tuple[int, str, object, list]]:
+    def _search_now(self) -> None:
+        self._search_job = None
+        self.refresh_rules()
+        self.rule_list.to(0)
+
+    def _visible_items(self) -> list[tuple[int, str, dict, list]]:
         query = self.search.get().strip().lower()
-        items: list[tuple[int, str, object, list]] = []
+        items: list[tuple[int, str, dict, list]] = []
 
         def matches(rule: dict) -> bool:
             if not query:
@@ -777,11 +843,11 @@ class MainWindow:
                 if not isinstance(entry, dict):
                     continue
                 if entry.get("type") == "group":
-                    children = entry.get("children") or []
                     before = len(items)
                     items.append((depth, "group", entry, entries))
-                    walk(children, depth + 1)
-                    if len(items) == before + 1 and query:
+                    if id(entry) not in self.collapsed or query:
+                        walk(entry.get("children") or [], depth + 1)
+                    if query and len(items) == before + 1:
                         items.pop()
                 elif matches(entry):
                     items.append((depth, "rule", entry, entries))
@@ -799,49 +865,51 @@ class MainWindow:
             return
         shown = items if self.show_all else items[:MAX_CARDS]
         for depth, kind, entry, _parent in shown:
-            indent = T.S(22) * depth
+            indent = T.S(24) * depth
             if kind == "group":
-                row = tk.Frame(inner, bg=T.SURFACE)
-                row.pack(fill="x", pady=(T.S(10), T.S(2)), padx=(indent + T.S(6), 0))
-                label(row, "▾  " + str(entry.get("name") or "Group"), 10, "bold", T.MUTED).pack(side="left")
-                count = sum(1 for _ in iter_rules(entry.get("children") or []))
-                label(row, f"  {count}", 9, color=T.FAINT).pack(side="left")
+                total, _on = count_rules(entry.get("children") or [])
+                GroupRow(inner, str(entry.get("name") or "Group"), total, id(entry) in self.collapsed, indent,
+                         lambda e=entry: self._toggle_group(e)).pack(fill="x", pady=(T.S(6), 0))
                 continue
-            card = RuleCard(inner, entry, self._rule_toggled, self.edit_rule, self.delete_rule, indent=indent)
-            card.pack(fill="x")
-            self.rule_list.bind_all_wheel(card)
+            RuleCard(inner, entry, self._rule_toggled, self.edit_rule, self.delete_rule, indent=indent).pack(fill="x")
         if len(items) > len(shown):
-            more = RoundButton(inner, f"Show all {len(items)} items", self._show_all, kind="ghost")
-            more.pack(pady=T.S(10))
+            Button(inner, f"Show all {len(items)}", self._show_all, kind="ghost").pack(pady=T.S(10))
+
+    def _keep_scroll(self, fn: Callable[[], None]) -> None:
+        y = self.rule_list.pos
+        fn()
+        self.root.update_idletasks()
+        self.rule_list.to(y)
+
+    def _toggle_group(self, group: dict) -> None:
+        if id(group) in self.collapsed:
+            self.collapsed.discard(id(group))
+        else:
+            self.collapsed.add(id(group))
+        self._keep_scroll(self.refresh_rules)
 
     def _show_all(self) -> None:
         self.show_all = True
-        self.refresh_rules()
+        self._keep_scroll(self.refresh_rules)
 
     def _empty_state(self, inner: tk.Frame) -> None:
         box = tk.Frame(inner, bg=T.SURFACE)
-        box.pack(fill="x", pady=T.S(60))
-        ring = tk.Canvas(box, width=T.S(84), height=T.S(84), bg=T.SURFACE, highlightthickness=0)
-        self._empty_img = rounded(T.S(84), T.S(84), T.S(42), T.CARD, T.SURFACE, T.LINE, T.S(1.5))
-        ring.create_image(0, 0, image=self._empty_img, anchor="nw")
-        ring.create_text(T.S(42), T.S(42), text="✦", font=T.font(24), fill=T.ACCENT)
-        ring.pack()
+        box.pack(fill="x", pady=T.S(90))
         searching = bool(self.search.get().strip())
-        label(box, "No matching rules" if searching else "No rules yet", 13, "bold").pack(pady=(T.S(12), T.S(2)))
-        label(box, "Try a different search." if searching else
-              "Add a rule, or import a Fleasion config from the sidebar.", 9, color=T.MUTED).pack()
+        label(box, "No results" if searching else "No rules", 12, "bold", T.MUTED).pack()
         if not searching:
-            RoundButton(box, "+  Add your first rule", self.add_rule, kind="primary", height=40).pack(pady=T.S(14))
+            Button(box, "Add rule", self.add_rule, kind="primary", icon="plus").pack(pady=T.S(16))
 
     def _rule_toggled(self, rule: dict, value: bool) -> None:
         rule["enabled"] = value
         self._save()
-        self.root.after(200, self._repaint_cards)
+        self._relayout_job = self.root.after(210, self._relayout_cards)  # after the switch animation
 
-    def _repaint_cards(self) -> None:
+    def _relayout_cards(self) -> None:
+        self._relayout_job = None
         for child in self.rule_list.inner.winfo_children():
             if isinstance(child, RuleCard):
-                child._paint()
+                child._layout()
 
     def add_rule(self) -> None:
         dlg = RuleDialog(self.root, None, self.store.folder)
@@ -849,29 +917,38 @@ class MainWindow:
         if dlg.result:
             self.data["replacement_rules"].append(dlg.result)
             self._save()
+            self.search.var.set("")
             self.refresh_rules()
             self.refresh_configs()
-            self.root.after(50, lambda: self.rule_list.canvas.yview_moveto(1.0))
-            log.emit("Rules", f"added “{dlg.result['name']}”. Clear the Roblox cache to see it in game")
+            self.root.update_idletasks()
+            self.rule_list.scroll_by(self.rule_list._max())
+            log.emit("Rules", f"added {dlg.result['name']}")
 
     def edit_rule(self, rule: dict) -> None:
         dlg = RuleDialog(self.root, rule, self.store.folder)
         dlg.show()
         if dlg.result:
             self._save()
-            self.refresh_rules()
+            self._keep_scroll(self.refresh_rules)
 
     def delete_rule(self, rule: dict) -> None:
         for _d, _k, entry, parent in self._visible_items():
             if entry is rule:
                 parent.remove(rule)
                 break
+        else:
+            return
         self._save()
-        self.refresh_rules()
+        self._keep_scroll(self.refresh_rules)
         self.refresh_configs()
+        log.emit("Rules", f"deleted {rule.get('name', 'rule')}")
 
     def on_close(self) -> None:
+        for job in (self._pump_job, getattr(self, "_search_job", None), getattr(self, "_relayout_job", None)):
+            if job:
+                self.root.after_cancel(job)
         self.ctl.shutdown()
+        anim.get().stop_all()
         self.root.destroy()
 
 
@@ -879,16 +956,24 @@ def _enable_dpi_awareness() -> None:
     if sys.platform == "win32":
         try:
             import ctypes
-            ctypes.windll.shcore.SetProcessDpiAwareness(1)  # crisp text on high-DPI screens
+            ctypes.windll.shcore.SetProcessDpiAwareness(1)  # crisp rendering on high-DPI screens
         except (AttributeError, OSError):
             pass
 
 
-def run() -> int:
+def create_root() -> tk.Tk:
     _enable_dpi_awareness()
+    fonts.register(asset_path("fonts"))
     root = tk.Tk()
     root.withdraw()
+    gfx.reset()
     T.setup(root)
+    anim.setup(root)
+    return root
+
+
+def run() -> int:
+    root = create_root()
     MainWindow(root)
     root.deiconify()
     root.mainloop()

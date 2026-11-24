@@ -4,7 +4,7 @@ First release of **Interceptium**, a local, loopback-only proxy that swaps Roblo
 - Replace an asset with another asset ID, remove it, or serve it from a local file
 - Multiple configs: switch each one on or off, and they combine
 - Imports Fleasion JSON configs (groups, asset-type names like `Image`, portable `/Folder/file` paths)
-- Smooth, rounded dark interface with a round start button, sliding switches and rule search
+- Rounded dark interface with the Inter font, vector icons and 60 fps animations
 - Launch Roblox through the proxy, or automatically reroute Roblox started from the website
 - Clear the Roblox asset cache, and remove the certificate from Roblox again
 
