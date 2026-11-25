@@ -25,25 +25,62 @@ pub const CHIP: Color32 = Color32::from_rgb(0x21, 0x27, 0x36);
 pub const GHOST: Color32 = Color32::from_rgb(0x1e, 0x23, 0x30);
 pub const GHOST_HOVER: Color32 = Color32::from_rgb(0x27, 0x2d, 0x3d);
 
-const SEMI: &str = "inter-semibold";
+const SEMI: &str = "ui-semibold";
+const MEDIUM: &str = "ui-medium";
 
+/// Apple's system font on a Mac (it is part of macOS, so it is loaded from there and never
+/// bundled); everywhere else Inter, the closest open-source match. Logs use Geist Mono.
 pub fn install_fonts(ctx: &egui::Context) {
+    use egui::epaint::text::{FontTweak, VariationCoords};
     let mut fonts = FontDefinitions::default();
-    fonts.font_data.insert("inter".into(), Arc::new(FontData::from_static(include_bytes!("../../assets/fonts/Inter-Regular.ttf"))));
-    fonts.font_data.insert(SEMI.into(), Arc::new(FontData::from_static(include_bytes!("../../assets/fonts/Inter-SemiBold.ttf"))));
-    fonts.families.entry(FontFamily::Proportional).or_default().insert(0, "inter".into());
-    let mut semi = vec![SEMI.to_string()];
-    semi.extend(fonts.families.get(&FontFamily::Proportional).cloned().unwrap_or_default());
-    fonts.families.insert(FontFamily::Name(SEMI.into()), semi);
+    let builtin = fonts.families.get(&FontFamily::Proportional).cloned().unwrap_or_default();
+    let mut put = |name: &str, data: FontData| {
+        fonts.font_data.insert(name.into(), Arc::new(data));
+    };
+    put("inter", FontData::from_static(include_bytes!("../../assets/fonts/Inter-Regular.ttf")));
+    put("inter-medium", FontData::from_static(include_bytes!("../../assets/fonts/Inter-Medium.ttf")));
+    put("inter-display-semibold", FontData::from_static(include_bytes!("../../assets/fonts/InterDisplay-SemiBold.ttf")));
+    put("geist-mono", FontData::from_static(include_bytes!("../../assets/fonts/GeistMono-Regular.ttf")));
+    let mut regular = vec!["inter".to_string()];
+    let mut medium = vec!["inter-medium".to_string()];
+    let mut semi = vec!["inter-display-semibold".to_string()];
+    if let Some(sf) = apple_system_font() {
+        let sf: Arc<dyn AsRef<[u8]> + Send + Sync> = Arc::new(sf);
+        for (name, weight, list) in [("sf", 400.0, &mut regular), ("sf-medium", 510.0, &mut medium), ("sf-semibold", 590.0, &mut semi)] {
+            let tweak = FontTweak { coords: VariationCoords::new([(*b"wght", weight)]), ..Default::default() };
+            put(name, FontData::from_blob(sf.clone(), 0).tweak(tweak));
+            list.insert(0, name.to_string());
+        }
+    }
+    fonts.families.insert(FontFamily::Proportional, [regular, builtin.clone()].concat());
+    fonts.families.insert(FontFamily::Name(MEDIUM.into()), [medium, builtin.clone()].concat());
+    fonts.families.insert(FontFamily::Name(SEMI.into()), [semi, builtin].concat());
+    let mono_fallback = fonts.families.get(&FontFamily::Monospace).cloned().unwrap_or_default();
+    fonts.families.insert(FontFamily::Monospace, [vec!["geist-mono".to_string()], mono_fallback].concat());
     ctx.set_fonts(fonts);
+}
+
+#[cfg(target_os = "macos")]
+fn apple_system_font() -> Option<Vec<u8>> {
+    std::fs::read("/System/Library/Fonts/SFNS.ttf").ok()
+}
+
+#[cfg(not(target_os = "macos"))]
+fn apple_system_font() -> Option<Vec<u8>> {
+    None
 }
 
 pub fn regular(size: f32) -> FontId {
     FontId::new(size, FontFamily::Proportional)
 }
 
+pub fn medium(size: f32) -> FontId {
+    FontId::new(size, FontFamily::Name(MEDIUM.into()))
+}
+
+/// Titles (18 pt and up) use the semibold display cut; smaller text stays medium, never bold.
 pub fn semi(size: f32) -> FontId {
-    FontId::new(size, FontFamily::Name(SEMI.into()))
+    if size >= 18.0 { FontId::new(size, FontFamily::Name(SEMI.into())) } else { medium(size) }
 }
 
 pub fn mono(size: f32) -> FontId {

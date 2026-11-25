@@ -633,8 +633,7 @@ impl MainApp {
         // proxy card
         let card_h = 356.0;
         let proxy = Rect::from_min_size(rect.min, vec2(rect.width(), card_h));
-        ui.painter().rect_filled(proxy, CornerRadius::same(22), t::CARD);
-        ui.painter().rect_stroke(proxy, CornerRadius::same(22), Stroke::new(1.0, alpha(t::LINE, 0.6)), StrokeKind::Inside);
+        widgets::panel(ui.painter(), proxy, 22, t::CARD);
         let mut c = ui.new_child(UiBuilder::new().max_rect(proxy.shrink(18.0)).layout(egui::Layout::top_down(egui::Align::Center)));
         c.add_space(6.0);
         if widgets::power_button(&mut c, running, self.busy > 0).clicked() {
@@ -655,8 +654,7 @@ impl MainApp {
 
         // configs card
         let list = Rect::from_min_max(pos2(rect.left(), proxy.bottom() + 16.0), rect.max);
-        ui.painter().rect_filled(list, CornerRadius::same(22), t::CARD);
-        ui.painter().rect_stroke(list, CornerRadius::same(22), Stroke::new(1.0, alpha(t::LINE, 0.6)), StrokeKind::Inside);
+        widgets::panel(ui.painter(), list, 22, t::CARD);
         let head = Rect::from_min_size(list.min + vec2(18.0, 12.0), vec2(list.width() - 30.0, 36.0));
         ui.painter().text(pos2(head.left(), head.center().y), Align2::LEFT_CENTER, "Configs", t::semi(15.0), t::TEXT);
         let mut hc = ui.new_child(UiBuilder::new().max_rect(head).layout(egui::Layout::right_to_left(egui::Align::Center)));
@@ -707,6 +705,9 @@ impl MainApp {
         let painter = ui.painter().with_clip_rect(rect.intersect(ui.clip_rect()));
         let body = Rect::from_min_size(rect.min, vec2(rect.width(), full_h)).translate(vec2(0.0, (h - full_h) / 2.0));
         let bg = mix(mix(alpha(t::CARD_HOVER, 0.0), t::CARD_HOVER, hover), t::CARD_SELECTED, sel);
+        if sel > 0.01 || hover > 0.01 {
+            widgets::shadow(&painter, body, 16, 14.0, 3.0, alpha(Color32::BLACK, (0.30 * sel + 0.15 * hover) * grow));
+        }
         painter.rect_filled(body, CornerRadius::same(16), bg.gamma_multiply(grow));
         if sel > 0.01 {
             let bar = Rect::from_center_size(pos2(body.left() + 4.0, body.center().y), vec2(3.0, 24.0 * sel));
@@ -733,8 +734,7 @@ impl MainApp {
     }
 
     fn rules_panel(&mut self, ui: &mut Ui, rect: Rect, acts: &mut Vec<Act>) {
-        ui.painter().rect_filled(rect, CornerRadius::same(22), t::CARD);
-        ui.painter().rect_stroke(rect, CornerRadius::same(22), Stroke::new(1.0, alpha(t::LINE, 0.6)), StrokeKind::Inside);
+        widgets::panel(ui.painter(), rect, 22, t::CARD);
         let inner = rect.shrink2(vec2(22.0, 18.0));
         let ctx = ui.ctx().clone();
         let fade = tween_from(&ctx, Id::unique("rules-fade"), 0.0, 1.0, 0.25, anim::ease_out_cubic);
@@ -796,8 +796,7 @@ impl MainApp {
     }
 
     fn log_panel(&mut self, ui: &mut Ui, rect: Rect, open: f32, acts: &mut Vec<Act>) {
-        ui.painter().rect_filled(rect, CornerRadius::same(18), t::SURFACE);
-        ui.painter().rect_stroke(rect, CornerRadius::same(18), Stroke::new(1.0, alpha(t::LINE, 0.6)), StrokeKind::Inside);
+        widgets::panel(ui.painter(), rect, 18, t::SURFACE);
         let head = Rect::from_min_size(rect.min, vec2(rect.width(), 40.0));
         let resp = ui.interact(head, Id::unique("log-head"), Sense::click()).on_hover_cursor(egui::CursorIcon::PointingHand);
         if resp.clicked() {
@@ -1155,6 +1154,8 @@ fn rule_card(ui: &mut Ui, path: &Path_, rule: &Map<String, Value>, depth: usize,
     let hover = tween_bool(ui.ctx(), id.with("h"), ui.rect_contains_pointer(rect), 0.14);
     let enabled = rule.get("enabled").map(rules::truthy).unwrap_or(true);
     let on = tween_bool(ui.ctx(), id.with("on"), enabled, 0.2);
+    let rect = rect.translate(vec2(0.0, -1.5 * hover));
+    widgets::shadow(ui.painter(), rect, 16, 10.0 + 12.0 * hover, 2.0 + 4.0 * hover, alpha(Color32::BLACK, 0.22 + 0.20 * hover));
     ui.painter().rect_filled(rect, CornerRadius::same(16), mix(t::SURFACE, t::CARD_HOVER, hover));
     ui.painter().rect_stroke(rect, CornerRadius::same(16), Stroke::new(1.0, mix(alpha(t::LINE, 0.5), t::LINE, hover)), StrokeKind::Inside);
     let mut en = enabled;
@@ -1165,7 +1166,7 @@ fn rule_card(ui: &mut Ui, path: &Path_, rule: &Map<String, Value>, depth: usize,
     }
     let mode = rule_mode(rule);
     let chip_text = mode_label(mode);
-    let chip_galley = ui.painter().layout_no_wrap(chip_text.to_string(), t::semi(11.5), mode_color(mode));
+    let chip_galley = ui.painter().layout_no_wrap(chip_text.to_string(), t::medium(12.0), mode_color(mode));
     let icons_w = 80.0 * hover;
     let chip_rect = Rect::from_center_size(pos2(rect.right() - 18.0 - icons_w - (chip_galley.size().x + 20.0) / 2.0, rect.center().y), vec2(chip_galley.size().x + 20.0, 24.0));
     ui.painter().rect_filled(chip_rect, CornerRadius::same(12), alpha(mode_color(mode), 0.13 + 0.05 * on));

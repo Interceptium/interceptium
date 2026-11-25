@@ -6,7 +6,7 @@ use crate::gui::anim::{self, tween_bool};
 use crate::gui::icons::{self, Icon};
 use crate::gui::theme::{self as t, alpha, mix};
 use crate::gui::widgets::{self, Kind};
-use egui::{pos2, vec2, Align2, Color32, CornerRadius, Id, Rect, Sense, Stroke, StrokeKind, Ui, UiBuilder};
+use egui::{pos2, vec2, Align2, Color32, CornerRadius, Id, Rect, Sense, Stroke, StrokeKind, Ui, UiBuilder, Vec2};
 use std::path::PathBuf;
 use std::sync::{mpsc, Arc, Mutex};
 
@@ -214,7 +214,8 @@ impl SetupApp {
         let id = Id::unique(id);
         let hover = tween_bool(ui.ctx(), id.with("h"), resp.hovered(), 0.15);
         let press = tween_bool(ui.ctx(), id.with("p"), resp.is_pointer_button_down_on(), 0.08);
-        let r = rect.shrink(press * 1.5);
+        let r = rect.shrink(press * 1.5).translate(vec2(0.0, -1.5 * hover));
+        widgets::shadow(ui.painter(), r, 18, 14.0 + 14.0 * hover, 3.0 + 5.0 * hover, alpha(Color32::BLACK, 0.28 + 0.2 * hover));
         ui.painter().rect_filled(r, CornerRadius::same(18), mix(t::CARD, t::CARD_HOVER, hover));
         ui.painter().rect_stroke(r, CornerRadius::same(18), Stroke::new(1.0, mix(alpha(t::LINE, 0.6), alpha(color, 0.5), hover)), StrokeKind::Inside);
         let c = pos2(r.left() + 40.0, r.center().y);
@@ -294,6 +295,7 @@ impl SetupApp {
         let c = r.center();
         ui.painter().circle_stroke(c, 34.0 + ring * 14.0, Stroke::new(2.0, alpha(color, 0.35 * (1.0 - ring))));
         ui.painter().circle_filled(c, 40.0 * pop.max(0.0), alpha(color, 0.16));
+        widgets::shadow(ui.painter(), Rect::from_center_size(c, Vec2::splat(56.0 * pop.max(0.0))), 28, 24.0, 6.0, alpha(color, 0.35 * pop.clamp(0.0, 1.0)));
         ui.painter().circle_filled(c, 28.0 * pop.max(0.0), color);
         if pop > 0.5 {
             icons::draw(ui.painter(), icon, c, 30.0 * pop.min(1.0), t::ACCENT_TEXT);

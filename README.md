@@ -152,5 +152,6 @@ Replace `assets/logo.png` (256×256), `assets/logo_96.png` (window icon) and `as
 
 MIT. See [LICENSE](LICENSE).
 
-The bundled [Inter](https://rsms.me/inter/) font is licensed under the SIL Open Font License 1.1
-(`assets/fonts/OFL.txt`). It is loaded for Interceptium only and is not installed on your system.
+On a Mac the window uses Apple's system font. Elsewhere it uses the bundled [Inter](https://rsms.me/inter/) font, and logs use
+[Geist Mono](https://github.com/vercel/geist-font); both are licensed under the SIL Open Font License 1.1
+(`assets/fonts/OFL-Inter.txt`, `assets/fonts/OFL-GeistMono.txt`). They are loaded for Interceptium only and are not installed on your system.

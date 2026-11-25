@@ -22,9 +22,24 @@ fn colors(kind: Kind) -> (Color32, Color32, Color32, Color32) {
     }
 }
 
+/// A soft drop shadow under a rounded rectangle.
+pub fn shadow(p: &egui::Painter, rect: Rect, radius: u8, blur: f32, y: f32, color: Color32) {
+    let s = egui::epaint::Shadow { offset: [0, y.round().clamp(-127.0, 127.0) as i8], blur: blur.round().clamp(0.0, 255.0) as u8, spread: 0, color };
+    p.add(s.as_shape(rect, CornerRadius::same(radius)));
+}
+
+/// A raised panel: shadow, fill, hairline border and a faint top highlight.
+pub fn panel(p: &egui::Painter, rect: Rect, radius: u8, fill: Color32) {
+    shadow(p, rect, radius, 32.0, 10.0, alpha(Color32::BLACK, 0.38));
+    p.rect_filled(rect, CornerRadius::same(radius), fill);
+    p.rect_stroke(rect, CornerRadius::same(radius), Stroke::new(1.0, alpha(t::LINE, 0.65)), StrokeKind::Inside);
+    let top = Rect::from_min_max(rect.min + vec2(radius as f32, 0.5), egui::pos2(rect.right() - radius as f32, rect.top() + 1.5));
+    p.rect_filled(top, CornerRadius::ZERO, alpha(Color32::WHITE, 0.035));
+}
+
 /// A pill button. `width` 0 sizes it to its text.
 pub fn button(ui: &mut Ui, id: impl std::hash::Hash + std::fmt::Debug, text: &str, icon: Option<Icon>, kind: Kind, width: f32, height: f32, enabled: bool) -> Response {
-    let font = t::semi(13.5);
+    let font = t::medium(14.0);
     let galley = ui.painter().layout_no_wrap(text.to_string(), font, Color32::WHITE);
     let icon_w = if icon.is_some() { 22.0 } else { 0.0 };
     let w = if width > 0.0 { width } else { galley.size().x + icon_w + 36.0 };
@@ -36,8 +51,10 @@ pub fn button(ui: &mut Ui, id: impl std::hash::Hash + std::fmt::Debug, text: &st
         let (fill, hov, prs, fg) = colors(kind);
         let mut bg = mix(fill, hov, hover);
         bg = mix(bg, prs, press);
-        let r = rect.shrink(press * 1.2);
+        let r = rect.shrink(press * 1.2).translate(vec2(0.0, -hover * 1.0 + press * 1.0));
         let fade = if enabled { 1.0 } else { 0.45 };
+        let glow = if kind == Kind::Primary { alpha(t::ACCENT, (0.22 + 0.20 * hover - 0.12 * press) * fade) } else { alpha(Color32::BLACK, (0.28 + 0.12 * hover) * fade) };
+        shadow(ui.painter(), r, (height / 2.0) as u8, 14.0 + 8.0 * hover, 3.0 + 3.0 * hover - 2.0 * press, glow);
         ui.painter().rect_filled(r, CornerRadius::same((height / 2.0) as u8), bg.gamma_multiply(fade));
         let content_w = galley.size().x + icon_w;
         let mut x = r.center().x - content_w / 2.0;
@@ -97,6 +114,7 @@ pub fn text_field(ui: &mut Ui, id: impl std::hash::Hash + std::fmt::Debug, text:
     let focused = ui.memory(|m| m.has_focus(edit_id));
     let f = tween_bool(ui.ctx(), id.with("f"), focused, 0.16);
     ui.painter().rect_filled(rect, CornerRadius::same(12), t::FIELD);
+    shadow(ui.painter(), rect, 12, 16.0 * f, 0.0, alpha(t::ACCENT, 0.16 * f));
     ui.painter().rect_stroke(rect, CornerRadius::same(12), Stroke::new(1.0 + f * 0.5, mix(t::LINE, t::ACCENT, f)), StrokeKind::Inside);
     let inner = rect.shrink2(vec2(14.0, 0.0));
     let mut child = ui.new_child(egui::UiBuilder::new().max_rect(inner).layout(egui::Layout::left_to_right(egui::Align::Center)));
@@ -122,7 +140,9 @@ pub fn segmented(ui: &mut Ui, id: impl std::hash::Hash + std::fmt::Debug, labels
     let seg = (rect.width() - 8.0) / n;
     let pos = tween(ui.ctx(), id.with("pos"), *selected as f32, 0.26);
     let hl = Rect::from_min_size(pos2(rect.left() + 4.0 + pos * seg, rect.top() + 4.0), vec2(seg, height - 8.0));
+    shadow(ui.painter(), hl, 15, 10.0, 2.0, alpha(Color32::BLACK, 0.4));
     ui.painter().rect_filled(hl, CornerRadius::same(15), t::CARD_HOVER);
+    ui.painter().rect_stroke(hl, CornerRadius::same(15), Stroke::new(1.0, alpha(Color32::WHITE, 0.05)), StrokeKind::Inside);
     let mut changed = false;
     for (i, label) in labels.iter().enumerate() {
         let r = Rect::from_min_size(pos2(rect.left() + 4.0 + i as f32 * seg, rect.top() + 4.0), vec2(seg, height - 8.0));
@@ -134,7 +154,7 @@ pub fn segmented(ui: &mut Ui, id: impl std::hash::Hash + std::fmt::Debug, labels
         let near = (1.0 - (pos - i as f32).abs()).clamp(0.0, 1.0);
         let hover = tween_bool(ui.ctx(), id.with(("h", i)), resp.hovered(), 0.12);
         let color = mix(mix(t::MUTED, t::TEXT, hover * 0.6), t::TEXT, near);
-        ui.painter().text(r.center(), Align2::CENTER_CENTER, *label, t::semi(13.0), color);
+        ui.painter().text(r.center(), Align2::CENTER_CENTER, *label, t::medium(13.5), color);
     }
     changed
 }
@@ -242,7 +262,8 @@ pub fn card() -> egui::Frame {
     egui::Frame::new()
         .fill(t::CARD)
         .corner_radius(CornerRadius::same(18))
-        .stroke(Stroke::new(1.0, alpha(t::LINE, 0.6)))
+        .stroke(Stroke::new(1.0, alpha(t::LINE, 0.65)))
+        .shadow(egui::Shadow { offset: [0, 10], blur: 30, spread: 0, color: alpha(Color32::BLACK, 0.36) })
         .inner_margin(egui::Margin::same(16))
 }
 
