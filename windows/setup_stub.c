@@ -24,7 +24,99 @@ static BOOL quiet_mode(void) {
     return wcsstr(GetCommandLineW(), L"--quiet") != NULL;
 }
 
+/* ---- "Preparing setup" window, shown while files are unpacked (not in --quiet mode) ---- */
+static HWND g_splash;
+static double g_progress;
+
+static LRESULT CALLBACK splash_proc(HWND h, UINT msg, WPARAM w, LPARAM l) {
+    if (msg == WM_PAINT) {
+        PAINTSTRUCT ps;
+        HDC dc = BeginPaint(h, &ps);
+        RECT r, bar;
+        GetClientRect(h, &r);
+        HBRUSH bg = CreateSolidBrush(RGB(17, 20, 28));
+        FillRect(dc, &r, bg);
+        DeleteObject(bg);
+        HICON icon = (HICON)LoadImageW(GetModuleHandleW(NULL), MAKEINTRESOURCEW(1), IMAGE_ICON, 40, 40, 0);
+        if (icon) {
+            DrawIconEx(dc, 28, (r.bottom - 40) / 2 - 6, icon, 40, 40, 0, NULL, DI_NORMAL);
+            DestroyIcon(icon);
+        }
+        SetBkMode(dc, TRANSPARENT);
+        SetTextColor(dc, RGB(236, 239, 245));
+        HFONT font = CreateFontW(-17, 0, 0, 0, FW_SEMIBOLD, 0, 0, 0, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
+                                 CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Segoe UI");
+        HGDIOBJ old = SelectObject(dc, font);
+        RECT text = r;
+        text.left = 84;
+        text.bottom -= 12;
+        DrawTextW(dc, L"Preparing Interceptium Setup", -1, &text, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+        SelectObject(dc, old);
+        DeleteObject(font);
+        bar.left = 84; bar.right = r.right - 28; bar.top = r.bottom - 34; bar.bottom = bar.top + 4;
+        HBRUSH track = CreateSolidBrush(RGB(45, 52, 70));
+        FillRect(dc, &bar, track);
+        DeleteObject(track);
+        bar.right = bar.left + (LONG)((bar.right - bar.left) * g_progress);
+        HBRUSH fill = CreateSolidBrush(RGB(47, 211, 199));
+        FillRect(dc, &bar, fill);
+        DeleteObject(fill);
+        EndPaint(h, &ps);
+        return 0;
+    }
+    if (msg == WM_ERASEBKGND) return 1;
+    return DefWindowProcW(h, msg, w, l);
+}
+
+static void pump(void) {
+    MSG m;
+    while (PeekMessageW(&m, NULL, 0, 0, PM_REMOVE)) {
+        TranslateMessage(&m);
+        DispatchMessageW(&m);
+    }
+}
+
+static BOOL quiet_mode(void);
+
+static void splash_show(HINSTANCE inst) {
+    if (quiet_mode()) return;
+    WNDCLASSEXW wc;
+    ZeroMemory(&wc, sizeof wc);
+    wc.cbSize = sizeof wc;
+    wc.lpfnWndProc = splash_proc;
+    wc.hInstance = inst;
+    wc.hCursor = LoadCursorW(NULL, (LPCWSTR)IDC_APPSTARTING);
+    wc.hIcon = LoadIconW(inst, MAKEINTRESOURCEW(1));
+    wc.lpszClassName = L"InterceptiumSetupSplash";
+    RegisterClassExW(&wc);
+    int w = 440, h = 120;
+    int x = (GetSystemMetrics(SM_CXSCREEN) - w) / 2, y = (GetSystemMetrics(SM_CYSCREEN) - h) / 3;
+    g_splash = CreateWindowExW(WS_EX_APPWINDOW, wc.lpszClassName, L"Interceptium Setup", WS_POPUP | WS_VISIBLE,
+                               x, y, w, h, NULL, NULL, inst, NULL);
+    if (g_splash) {
+        UpdateWindow(g_splash);
+        pump();
+    }
+}
+
+static void splash_progress(double value) {
+    if (!g_splash) return;
+    g_progress = value < 0 ? 0 : (value > 1 ? 1 : value);
+    InvalidateRect(g_splash, NULL, FALSE);
+    UpdateWindow(g_splash);
+    pump();
+}
+
+static void splash_close(void) {
+    if (g_splash) {
+        DestroyWindow(g_splash);
+        g_splash = NULL;
+        pump();
+    }
+}
+
 static int fail(const wchar_t *message) {
+    splash_close();
     if (!quiet_mode()) MessageBoxW(NULL, message, L"Interceptium Setup", MB_ICONERROR);
     return 2;
 }
@@ -126,6 +218,7 @@ static int unpack(const unsigned char *list, uint64_t size, const wchar_t *targe
         CloseHandle(o);
         if (!ok) return 0;
         pos = start + data_len;
+        splash_progress((double)pos / (double)size);
     }
     return pos == size;
 }
@@ -164,8 +257,9 @@ static unsigned char *load_list(HANDLE f, uint64_t offset, uint64_t size, BOOL c
 }
 
 int WINAPI wWinMain(HINSTANCE inst, HINSTANCE prev, PWSTR cmdline, int show) {
-    (void)inst; (void)prev; (void)cmdline; (void)show;
+    (void)prev; (void)cmdline; (void)show;
     static wchar_t dir[PATH_CAP], exe[PATH_CAP], temp[PATH_CAP], work[PATH_CAP], python[PATH_CAP], script[PATH_CAP];
+    splash_show(inst);
     if (!own_dir(dir, PATH_CAP, exe, PATH_CAP)) return fail(L"Could not locate the setup file.");
 
     HANDLE f = CreateFileW(exe, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
@@ -200,6 +294,8 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE prev, PWSTR cmdline, int show) {
     swprintf(script, PATH_CAP, L"%ls\\app\\setup\\run_setup.py", work);
     SetEnvironmentVariableW(L"INTERCEPTIUM_SETUP_EXE", exe);
     SetEnvironmentVariableW(L"INTERCEPTIUM_BUNDLE", work);
+    splash_progress(1.0);
+    splash_close();
     int code = run_python(python, script, work, forwarded_args());
 
     for (int i = 0; i < 20 && !delete_tree(work); i++) Sleep(250);  /* files can stay locked briefly */

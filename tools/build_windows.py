@@ -167,7 +167,8 @@ def compile_program(source: str, name: str, description: str) -> Path:
         f'rc /nologo /fo "{work / (name + ".res")}" "{work / (name + ".rc")}" || exit /b 1\r\n'
         f'cl /nologo /O2 /W3 /GS /sdl /DUNICODE /D_UNICODE /D_CRT_SECURE_NO_WARNINGS /I "{ROOT / "windows"}" '
         f'"{ROOT / "windows" / source}" "{work / (name + ".res")}" /Fo"{work}\\\\" /Fe"{exe}" '
-        "/link /SUBSYSTEM:WINDOWS /MANIFEST:NO /DYNAMICBASE /NXCOMPAT user32.lib kernel32.lib cabinet.lib || exit /b 1\r\n",
+        "/link /SUBSYSTEM:WINDOWS /MANIFEST:NO /DYNAMICBASE /NXCOMPAT /RELEASE /OPT:REF /OPT:ICF "
+        "user32.lib gdi32.lib kernel32.lib cabinet.lib || exit /b 1\r\n",
         encoding="utf-8")
     run(["cmd.exe", "/c", str(batch)])
     return exe
