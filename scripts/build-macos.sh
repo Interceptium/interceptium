@@ -1,9 +1,10 @@
 #!/bin/sh
-# Builds Interceptium for macOS. Needs Rust (https://rustup.rs) and the Xcode command line tools.
-# Output: dist/Interceptium
+# Build Interceptium on macOS.
+# Requirements: Rust from https://rustup.rs and Apple's command line developer tools.
+# The finished program is written to dist/Interceptium.
 set -e
 cd "$(dirname "$0")/.."
 cargo build --release --locked
 mkdir -p dist
 cp target/release/interceptium dist/Interceptium
-echo "Built dist/Interceptium"
+echo "Done: dist/Interceptium"
