@@ -101,6 +101,7 @@ def build_runtime() -> None:
             shutil.copy2(dll, RUNTIME / dll.name)
     if (base / "tcl").is_dir():
         copy_tree(base / "tcl", RUNTIME / "tcl")
+        shutil.rmtree(RUNTIME / "tcl" / "nmake", ignore_errors=True)  # Tcl's build helpers, not needed at run time
 
     step("runtime: path configuration")
     (RUNTIME / f"{tag}._pth").write_text(f"{tag}.zip\n.\nLib\nsite-packages\n", encoding="utf-8")
@@ -108,6 +109,9 @@ def build_runtime() -> None:
     step("runtime: pinned dependencies")
     run([sys.executable, "-m", "pip", "install", "--disable-pip-version-check", "--no-compile", "--only-binary=:all:",
          "--target", RUNTIME / "site-packages", "-r", ROOT / "requirements.txt"])
+    # pip also drops developer command-line tools (e.g. cffi-gen-src.exe) into bin/; Interceptium
+    # never uses them, so they aren't shipped.
+    shutil.rmtree(RUNTIME / "site-packages" / "bin", ignore_errors=True)
 
 
 # -- app ------------------------------------------------------------------------------
@@ -170,6 +174,14 @@ def compile_program(source: str, name: str, description: str) -> Path:
 
 
 # -- checks ----------------------------------------------------------------------------
+def no_stray_programs() -> None:
+    """Only the launcher and the signed Python executables may be .exe files in the bundle."""
+    allowed = {"Interceptium.exe", "runtime/python.exe", "runtime/pythonw.exe"}
+    found = {p.relative_to(BUNDLE).as_posix() for p in BUNDLE.rglob("*.exe")}
+    if found != allowed:
+        raise SystemExit(f"unexpected programs in the bundle: {sorted(found - allowed)}")
+
+
 def smoke_test() -> None:
     step("smoke test the bundle")
     python = RUNTIME / "python.exe"
@@ -194,6 +206,7 @@ def main() -> int:
     launcher = compile_program("launcher.c", "Interceptium", "Interceptium")
     shutil.copy2(launcher, BUNDLE / "Interceptium.exe")
     stub = compile_program("setup_stub.c", f"Interceptium-Setup-{__version__}", "Interceptium Setup")
+    no_stray_programs()
     smoke_test()
     step("pack the setup")
     out = pack_setup.pack(stub, BUNDLE, DIST / f"Interceptium-Setup-{__version__}.exe", compress=True)
