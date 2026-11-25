@@ -183,9 +183,12 @@ impl Installer {
 
     /// Delete program copies an earlier uninstall moved out of the way.
     pub fn clean_moved_copies(&self) {
-        let Ok(rd) = std::fs::read_dir(self.ops.temp_dir()) else { return };
+        let mut folders = vec![self.ops.temp_dir(), default_directory().parent().map(Path::to_path_buf).unwrap_or_default()];
+        if let Some(parent) = self.ops.read_install_location().and_then(|d| d.parent().map(Path::to_path_buf)) {
+            folders.push(parent);
+        }
         let me = std::env::current_exe().ok();
-        for p in rd.filter_map(|e| e.ok()).map(|e| e.path()) {
+        for p in folders.iter().filter_map(|f| std::fs::read_dir(f).ok()).flat_map(|rd| rd.filter_map(|e| e.ok()).map(|e| e.path())) {
             let name = p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
             if name.starts_with(MOVED_PREFIX) && name.ends_with(".tmp") && me.as_deref().map(|m| !same_file(m, &p)).unwrap_or(true) {
                 let _ = std::fs::remove_file(p);
@@ -306,12 +309,23 @@ impl Installer {
                 // A running program can't delete itself, but it can be moved out of the way;
                 // the moved copy is deleted the next time Interceptium is installed.
                 let source_is_this = same_file(&self.source(), &path);
-                let aside = self.ops.temp_dir().join(format!("{MOVED_PREFIX}{}.tmp", std::process::id()));
-                let _ = std::fs::remove_file(&aside);
-                if std::fs::rename(&path, &aside).is_ok() && source_is_this {
-                    *self.source.lock().unwrap_or_else(|e| e.into_inner()) = aside;
+                // A file can only be renamed within one drive, so if the temp folder is on another
+                // drive, the copy goes next to the install folder instead.
+                let name = format!("{MOVED_PREFIX}{}.tmp", std::process::id());
+                let mut places = vec![self.ops.temp_dir().join(&name)];
+                if let Some(parent) = directory.parent() {
+                    places.push(parent.join(&name));
                 }
-                continue; // if the move failed, the file (and its folder) stay
+                for aside in places {
+                    let _ = std::fs::remove_file(&aside);
+                    if std::fs::rename(&path, &aside).is_ok() {
+                        if source_is_this {
+                            *self.source.lock().unwrap_or_else(|e| e.into_inner()) = aside;
+                        }
+                        break;
+                    }
+                }
+                continue; // if every move failed, the file (and its folder) stay
             }
             retry(|| std::fs::remove_file(&path)).map_err(|e| format!("Can't remove {name}: {e}"))?;
             progress(0.5 + 0.3 * (i + 1) as f32 / files.len().max(1) as f32, "Removing files");
