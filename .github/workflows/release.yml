@@ -152,6 +152,11 @@ jobs:
           name: windows-setup
           path: dist/Interceptium-Setup-*.exe
           if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-bundle  # the unpacked contents of the installer, for scanning each file
+          path: dist/bundle
+          if-no-files-found: error
 
   sources:
     if: github.event_name != 'workflow_dispatch' || inputs.reuse_run == ''
@@ -182,8 +187,14 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
+          name: windows-setup
           path: out
-          merge-multiple: true
+          run-id: ${{ inputs.reuse_run || github.run_id }}
+          github-token: ${{ github.token }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: sources
+          path: out
           run-id: ${{ inputs.reuse_run || github.run_id }}
           github-token: ${{ github.token }}
       - name: Checksums
