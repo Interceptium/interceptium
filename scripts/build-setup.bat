@@ -1,19 +1,12 @@
 @echo off
-rem Builds the Windows installer (and the app it contains) into dist\ : dist\bundle\ (what gets installed) and
-rem dist\Interceptium-Setup-<version>.exe. Needs Windows, Python 3.14 and the
-rem Visual Studio Build Tools ("Desktop development with C++").
+rem Builds Interceptium for Windows. Needs Rust (https://rustup.rs) with the MSVC toolchain
+rem and the Visual Studio Build Tools ("Desktop development with C++").
+rem Output: dist\Interceptium-Setup-1.0.0.exe (the app, which is also its own setup).
 setlocal
-cd /d "%~dp0.."
-where py >nul 2>nul && (set PY=py -3.14) || (set PY=python)
-%PY% -m venv .venv || goto :error
-call .venv\Scripts\activate.bat || goto :error
-python -m pip install -r requirements.txt || goto :error
-python -m unittest discover -s tests || goto :error
-python -m unittest discover -s setup\tests || goto :error
-python tools\build_windows.py || goto :error
-echo.
-echo Done: see dist\
-exit /b 0
-:error
-echo Build failed.
-exit /b 1
+cd /d "%~dp0\.."
+cargo build --release --locked || exit /b 1
+if not exist dist mkdir dist
+for /f "tokens=3 delims= " %%v in ('findstr /b "version" Cargo.toml') do set VERSION=%%~v& goto :got
+:got
+copy /y target\release\interceptium.exe "dist\Interceptium-Setup-%VERSION%.exe" >nul || exit /b 1
+echo Built dist\Interceptium-Setup-%VERSION%.exe

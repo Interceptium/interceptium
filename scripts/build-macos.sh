@@ -1,10 +1,9 @@
-#!/usr/bin/env sh
-# Builds the Interceptium executable into dist/
+#!/bin/sh
+# Builds Interceptium for macOS. Needs Rust (https://rustup.rs) and the Xcode command line tools.
+# Output: dist/Interceptium
 set -e
 cd "$(dirname "$0")/.."
-python3 -m venv .venv
-. .venv/bin/activate
-python -m pip install -r requirements-build.txt
-python -m unittest discover -s tests
-python tools/build.py
-echo "Done: see dist/"
+cargo build --release --locked
+mkdir -p dist
+cp target/release/interceptium dist/Interceptium
+echo "Built dist/Interceptium"

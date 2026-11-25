@@ -23,12 +23,12 @@ Interceptium was designed to do one job and nothing else:
 | **No accounts, cookies or tokens** | It never reads your Roblox login, browser cookies or any credentials. |
 | **No other servers** | No telemetry, no update checks, no downloads. The only traffic is Roblox's own traffic. |
 | **Decrypts only Roblox asset hosts** | Only `assetdelivery.roblox.com`, `fts.rbxcdn.com` and `contentdelivery.roblox.com` are inspected. Every other connection is passed through as an encrypted tunnel it can't read. |
-| **Name-constrained certificate** | The local certificate authority is created on your PC and carries an X.509 *Name Constraints* extension. It only works for `roblox.com` and `rbxcdn.com`. Even if someone stole it, it couldn't fake your bank, email or any other site. A test in `tests/` proves this. |
+| **Name-constrained certificate** | The local certificate authority is created on your PC and carries an X.509 *Name Constraints* extension. It only works for `roblox.com` and `rbxcdn.com`. Even if someone stole it, it couldn't fake your bank, email or any other site. A test in `src/e2e_tests.rs` proves this. |
 | **Not in your system trust store** | The certificate is only added to Roblox's own `ssl/cacert.pem`, never to Windows/macOS trust. |
 | **No admin rights** | It doesn't edit the hosts file, system proxy settings or anything outside your user account. |
 | **Verified upstream TLS** | Connections from Interceptium to Roblox are fully certificate-checked. |
-| **Minimal dependencies** | Python standard library plus one package: [`cryptography`](https://cryptography.io) (PyCA), pinned in `requirements.txt`. |
-| **Undoable** | **Remove from Roblox** (or `--uninstall`) takes the certificate and setting back out. |
+| **Written in Rust** | Memory-safe, one self-contained program. It uses only widely used, open-source crates (rustls and ring for TLS, rcgen for certificates, tokio, serde, egui for the window), with exact versions locked in `Cargo.lock`. |
+| **Undoable** | **Remove from Roblox** (or `--remove-from-roblox`) takes the certificate and setting back out. |
 
 ## Download
 
@@ -36,11 +36,11 @@ Get it from the [Releases](../../releases) page:
 
 | File | What it is |
 |---|---|
-| `Interceptium-Setup-1.0.0.exe` | Windows installer |
-| `Interceptium-1.0.0-source-windows.zip` | Source with the Windows build script (`scripts\build-windows.bat`) and the installer |
+| `Interceptium-Setup-1.0.0.exe` | Windows: the app, which installs itself |
+| `Interceptium-1.0.0-source-windows.zip` | Source with the Windows build script (`scripts\build-windows.bat`) |
 | `Interceptium-1.0.0-source-linux.zip` | Source with `scripts/build-linux.sh` |
 | `Interceptium-1.0.0-source-macos.zip` | Source with `scripts/build-macos.sh` |
-| `Interceptium-Setup-1.0.0-source.zip` | Source of the installer only |
+| `Interceptium-Setup-1.0.0-source.zip` | Source with the setup build script (`scripts\build-setup.bat`); the setup is in `src/setup/` |
 | `SHA256SUMS.txt` | Checksums of the files above |
 
 Every file is built by GitHub Actions from this repository (`.github/workflows/release.yml`). Before a release is
@@ -48,7 +48,8 @@ published, the installer is tested on Windows with a real install, repair and un
 
 ### Windows installer
 
-Interceptium has its own installer (in `setup/`, no third-party installer tools):
+Interceptium installs itself (code in `src/setup/`, no third-party installer tools). The setup file *is* the
+program: nothing is unpacked to a temporary folder and no other program is started.
 
 - Installs for your user only (`%LOCALAPPDATA%\Programs\Interceptium`), so no administrator prompt.
 - Start menu and Desktop shortcuts.
@@ -56,7 +57,12 @@ Interceptium has its own installer (in `setup/`, no third-party installer tools)
 - **Repair**, **Reinstall** and **Uninstall** are in the installer and in Interceptium under **Settings > Installation**.
 - Uninstall removes only what it installed. Your configs stay unless you choose to delete them.
 
-See [setup/README.md](setup/README.md) for its command-line options.
+Setup options (also for scripted installs):
+
+```
+Interceptium-Setup-1.0.0.exe --install --quiet [--dir FOLDER] [--no-desktop] [--no-start-menu] [--launch] [--log FILE]
+Interceptium.exe --repair | --reinstall | --uninstall [--remove-data] [--quiet] [--log FILE]
+```
 
 ## How to use
 
@@ -113,33 +119,28 @@ Interceptium --headless           run the proxy without a window
 Interceptium --headless --launch  ...and launch Roblox through it
 Interceptium --port 60000         use a different port
 Interceptium --clear-cache        delete Roblox's asset cache and exit
-Interceptium --uninstall          remove Interceptium's certificate from Roblox and exit
+Interceptium --remove-from-roblox remove Interceptium's certificate from Roblox and exit
 ```
 
 Settings (`settings.json`) and configs (`configs/*.json`) are stored in `%LOCALAPPDATA%\Interceptium` (Windows),
 `~/Library/Application Support/Interceptium` (macOS) or `~/.local/share/interceptium` (Linux).
 
-## Run from source / build
+## Build from source
 
-Requires Python 3.11 or newer (3.14+ also handles zstd-compressed requests).
+Install Rust from [rustup.rs](https://rustup.rs) (on Windows, also the Visual Studio Build Tools with
+"Desktop development with C++"), then:
 
 ```
-pip install -r requirements.txt
-python run_interceptium.py
-
-# tests
-python -m unittest discover -s tests -v
-INTERCEPTIUM_GUI_TESTS=1 python -m unittest tests.test_gui -v   # needs a display
-
-# single-file executable
-pip install -r requirements-build.txt
-python tools/build.py
+cargo run --release            # run it
+cargo test                     # unit and end-to-end tests
+scripts\build-windows.bat      # Windows: dist\Interceptium-Setup-1.0.0.exe
+scripts/build-linux.sh         # Linux:   dist/interceptium
+scripts/build-macos.sh         # macOS:   dist/Interceptium
 ```
 
 ## Changing the logo
 
-Replace `assets/logo.png` with a 256×256 PNG, then run `python tools/make_icon.py --from-png assets/logo.png`
-to regenerate `assets/logo.ico`.
+Replace `assets/logo.png` (256×256), `assets/logo_96.png` (window icon) and `assets/logo.ico` (Windows exe icon).
 
 ## Notes
 

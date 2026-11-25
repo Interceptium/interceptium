@@ -1,0 +1,56 @@
+[package]
+name = "interceptium"
+version = "1.0.0"
+edition = "2021"
+rust-version = "1.85"
+description = "Local Roblox asset proxy"
+license = "MIT"
+publish = false
+build = "build.rs"
+
+[[bin]]
+name = "interceptium"
+path = "src/main.rs"
+
+[dependencies]
+tokio = { version = "1", features = ["rt-multi-thread", "net", "io-util", "time", "sync", "macros", "fs", "signal"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12"] }
+rustls-native-certs = "0.8"
+rcgen = { version = "0.14", default-features = false, features = ["ring", "pem", "x509-parser"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+flate2 = "1"
+ruzstd = "0.8"
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+ring = "0.17"
+time = "0.3"
+x509-parser = "0.18"
+eframe = { version = "0.37", default-features = false, features = ["glow", "wgpu", "x11", "wayland", "default_fonts"] }
+egui = { version = "0.37", default-features = false }
+image = { version = "0.25", default-features = false, features = ["png"] }
+rfd = "0.15"
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.61", features = [
+  "Win32_Foundation", "Win32_System_Registry", "Win32_System_Com", "Win32_UI_Shell",
+  "Win32_System_Threading", "Win32_System_Diagnostics_ToolHelp", "Win32_UI_WindowsAndMessaging",
+  "Win32_System_Wmi", "Win32_System_Variant", "Win32_System_Ole", "Win32_Storage_FileSystem",
+  "Win32_UI_Shell_Common", "Win32_System_Com_StructuredStorage", "Win32_System_Rpc", "Win32_System_Console", "Win32_Security",
+] }
+
+[build-dependencies]
+winresource = "0.1"
+
+[features]
+# Test builds only: scripted screenshots and frame timings.
+shots = []
+
+[dev-dependencies]
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+strip = "symbols"
+panic = "unwind"

@@ -1,9 +1,10 @@
 name: Build and release
 
-# Every push: tests on Windows, macOS and Linux, the Windows installer is built
-# and checked with a real install + uninstall, and the source archives are made.
-# A manual run (Actions > Build and release > Run workflow) also replaces the
-# GitHub release for the given version (default v1.0.0) with fresh files.
+# Every push: tests on Windows, macOS and Linux, the window is opened on Linux under a
+# virtual display, the Windows exe is built and checked with a real install, repair and
+# uninstall, and the source archives are made.
+# A manual run (Actions > Build and release > Run workflow) also replaces the GitHub
+# release for the given version (default v1.0.0).
 on:
   push:
     branches: ["**"]
@@ -21,6 +22,9 @@ on:
 permissions:
   contents: read
 
+env:
+  CARGO_TERM_COLOR: never
+
 jobs:
   test:
     strategy:
@@ -30,44 +34,46 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.14"
-      - name: Install pinned dependencies
-        run: python -m pip install -r requirements-build.txt
-      - name: App tests
-        run: python -m unittest discover -s tests -v
-      - name: Setup tests
-        run: python -m unittest discover -s setup/tests -v
-      - name: GUI tests (virtual display)
+      - name: Rust toolchain
+        run: rustup update stable --no-self-update && rustup default stable
+      - name: Tests
+        run: cargo test --locked
+      - name: Open the window under a virtual display and take a screenshot
         if: runner.os == 'Linux'
-        env:
-          INTERCEPTIUM_GUI_TESTS: "1"
         run: |
-          sudo apt-get update -q && sudo apt-get install -y -q xvfb
-          xvfb-run -a -s "-screen 0 1400x900x24" python -m unittest tests.test_gui -v
+          sudo apt-get update -q && sudo apt-get install -y -q xvfb libxkbcommon-x11-0 libgl1-mesa-dri
+          cargo build --release --locked --features shots
+          export INTERCEPTIUM_HOME="$RUNNER_TEMP/home" INTERCEPTIUM_RENDERER=glow
+          for scene in main rule settings0; do
+            INTERCEPTIUM_SHOT="$RUNNER_TEMP/$scene.png" INTERCEPTIUM_SHOT_SCENE=$scene \
+              timeout 120 xvfb-run -a -s "-screen 0 1400x900x24" ./target/release/interceptium
+            test -s "$RUNNER_TEMP/$scene.png"
+          done
 
   windows-setup:
     if: github.event_name != 'workflow_dispatch' || inputs.reuse_run == ''
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.14"
-      - name: Install pinned dependencies
-        run: python -m pip install -r requirements-build.txt
-      - name: Build (official signed Python runtime + our own C launcher and setup stub, no PyInstaller)
-        run: python tools/build_windows.py
+      - name: Rust toolchain
+        run: rustup update stable --no-self-update && rustup default stable
+      - name: Build
+        shell: pwsh
+        run: |
+          cargo build --release --locked
+          $version = (Select-String -Path Cargo.toml -Pattern '^version = "(.*)"').Matches[0].Groups[1].Value
+          New-Item -ItemType Directory -Force dist | Out-Null
+          Copy-Item target\release\interceptium.exe "dist\Interceptium-Setup-$version.exe"
+          Get-Item dist\*.exe | Format-Table Name, Length
+
       - name: Scan with Microsoft Defender (fails on any detection)
         shell: pwsh
         timeout-minutes: 15
         run: |
           $mp = Join-Path $env:ProgramFiles 'Windows Defender\MpCmdRun.exe'
           & $mp -SignatureUpdate | Out-Host
-          Get-MpComputerStatus | Select-Object AMProductVersion, AntivirusSignatureVersion, AntivirusSignatureLastUpdated | Format-List | Out-Host
           $found = $false
-          foreach ($f in @(Get-ChildItem dist\*.exe) + @(Get-Item dist\bundle\Interceptium.exe)) {
+          foreach ($f in Get-ChildItem dist\*.exe) {
             Write-Host "== scanning $($f.Name)"
             $out = & $mp -Scan -ScanType 3 -File $f.FullName -DisableRemediation 2>&1 | Out-String
             Write-Host $out
@@ -75,47 +81,32 @@ jobs:
           }
           if ($found) { throw 'Microsoft Defender flagged a build' }
 
-      - name: Install, repair and uninstall (the way Windows Settings does)
+      - name: Install, open, repair and uninstall (the way Windows Settings does)
         shell: pwsh
-        timeout-minutes: 12
-        env:
-          INTERCEPTIUM_TRACE_AFTER: "100"
+        timeout-minutes: 10
         run: |
           $ErrorActionPreference = 'Stop'
           $log = Join-Path $env:RUNNER_TEMP 'setup.log'
-          $env:INTERCEPTIUM_TRACE = Join-Path $env:RUNNER_TEMP 'trace.log'
-          function Show-Log {
-            if (Test-Path $log) { Get-Content $log | ForEach-Object { Write-Host "  setup> $_" } }
-            if (Test-Path $env:INTERCEPTIUM_TRACE) { Get-Content $env:INTERCEPTIUM_TRACE | ForEach-Object { Write-Host "  trace> $_" } }
-          }
-          function Run-Exe([string]$exe, [string[]]$arguments, [int]$seconds = 180) {
-            # Waits for this process only (not stray children) and never longer than $seconds.
+          $env:INTERCEPTIUM_HOME = Join-Path $env:RUNNER_TEMP 'home'
+          function Show-Log { if (Test-Path $log) { Get-Content $log | ForEach-Object { Write-Host "  setup> $_" } } }
+          function Run-Exe([string]$exe, [string[]]$arguments, [int]$seconds = 120) {
             $p = Start-Process -FilePath $exe -ArgumentList $arguments -PassThru
             if (-not $p.WaitForExit($seconds * 1000)) { Show-Log; Stop-Process -Id $p.Id -Force; throw "$exe timed out" }
             return $p.ExitCode
-          }
-          function Wait-Until([scriptblock]$done, [string]$what, [int]$seconds = 180) {
-            $deadline = (Get-Date).AddSeconds($seconds)
-            while (-not (& $done)) {
-              if ((Get-Date) -gt $deadline) { Show-Log; throw "timed out waiting for $what" }
-              Start-Sleep -Seconds 2
-            }
           }
           $setup = (Get-ChildItem dist\Interceptium-Setup-*.exe | Select-Object -First 1).FullName
           $dir = Join-Path $env:RUNNER_TEMP 'Interceptium'
           $key = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Interceptium'
           $lnk = Join-Path ([Environment]::GetFolderPath('Programs')) 'Interceptium.lnk'
 
-          Write-Host '== built app starts (before installing)'
-          $code = Run-Exe (Resolve-Path dist\bundle\Interceptium.exe).Path @('--version') 150
-          Show-Log
-          if ($code -ne 0) { throw "app exited with $code" }
+          Write-Host '== version'
+          if ((Run-Exe $setup @('--version')) -ne 0) { throw 'version failed' }
 
           Write-Host '== install'
-          $code = Run-Exe $setup @('--quiet', '--dir', "`"$dir`"", '--log', "`"$log`"")
+          $code = Run-Exe $setup @('--install', '--quiet', '--dir', "`"$dir`"", '--log', "`"$log`"")
           Show-Log
           if ($code -ne 0) { throw "install exited with $code" }
-          foreach ($f in 'Interceptium.exe', 'Interceptium Setup.exe', 'install.json') {
+          foreach ($f in 'Interceptium.exe', 'install.json') {
             if (-not (Test-Path (Join-Path $dir $f))) { throw "missing $f" }
           }
           $entry = Get-ItemProperty $key
@@ -123,19 +114,20 @@ jobs:
           if ($entry.DisplayName -ne 'Interceptium') { throw 'wrong DisplayName' }
           if (-not (Test-Path $lnk)) { throw 'Start menu shortcut missing' }
 
-          Write-Host '== app starts'
-          $code = Run-Exe (Join-Path $dir 'Interceptium.exe') @('--version') 60
-          if ($code -ne 0) { throw "app exited with $code" }
+          Write-Host '== the installed app opens its window and keeps running'
+          $app = Start-Process -FilePath (Join-Path $dir 'Interceptium.exe') -PassThru
+          Start-Sleep -Seconds 10
+          if ($app.HasExited) { throw "app exited early with $($app.ExitCode)" }
+          Stop-Process -Id $app.Id -Force
+          Start-Sleep -Seconds 2
 
           Write-Host '== repair'
-          Remove-Item (Join-Path $dir 'Interceptium.exe')
+          Remove-Item $lnk
           Remove-Item $log -ErrorAction SilentlyContinue
-          $code = Run-Exe (Join-Path $dir 'Interceptium Setup.exe') @('--repair', '--quiet', '--log', "`"$log`"")
-          if ($code -ne 0) { Show-Log; throw "repair launcher exited with $code" }
-          Wait-Until { (Test-Path $log) -and ((Get-Content $log -Raw) -match 'finished|failed|Traceback') } 'repair'
+          $code = Run-Exe $setup @('--repair', '--quiet', '--log', "`"$log`"")
           Show-Log
-          if ((Get-Content $log -Raw) -notmatch 'finished') { throw 'repair failed' }
-          if (-not (Test-Path (Join-Path $dir 'Interceptium.exe'))) { throw 'repair did not restore the app' }
+          if ($code -ne 0) { throw "repair exited with $code" }
+          if (-not (Test-Path $lnk)) { throw 'repair did not restore the shortcut' }
 
           Write-Host '== uninstall (QuietUninstallString from the Apps entry)'
           $entry = Get-ItemProperty $key
@@ -143,19 +135,16 @@ jobs:
           $exe, $rest = $Matches[1], $Matches[2]
           Remove-Item $log -ErrorAction SilentlyContinue
           $code = Run-Exe $exe @(($rest -split ' ') + @('--log', "`"$log`""))
-          if ($code -ne 0) { Show-Log; throw "uninstall launcher exited with $code" }
-          Wait-Until { -not ((Test-Path $dir) -or (Test-Path $key) -or (Test-Path $lnk)) } 'uninstall'
           Show-Log
+          if ($code -ne 0) { throw "uninstall exited with $code" }
+          if (Test-Path $dir) { Get-ChildItem -Recurse $dir | Out-Host; throw 'install folder still there' }
+          if (Test-Path $key) { throw 'Apps entry still there' }
+          if (Test-Path $lnk) { throw 'shortcut still there' }
           Write-Host 'Install, repair and uninstall all worked.'
       - uses: actions/upload-artifact@v4
         with:
           name: windows-setup
           path: dist/Interceptium-Setup-*.exe
-          if-no-files-found: error
-      - uses: actions/upload-artifact@v4
-        with:
-          name: windows-bundle  # the unpacked contents of the installer, for scanning each file
-          path: dist/bundle
           if-no-files-found: error
 
   sources:
@@ -163,11 +152,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.14"
       - name: Make source archives
-        run: python tools/package_sources.py
+        run: sh scripts/package-sources.sh
       - uses: actions/upload-artifact@v4
         with:
           name: sources
@@ -178,7 +164,7 @@ jobs:
     if: >-
       always() && github.event_name == 'workflow_dispatch' && inputs.version != '' &&
       (inputs.reuse_run != '' || (needs.windows-setup.result == 'success' && needs.sources.result == 'success'))
-    needs: [windows-setup, sources]  # tests already run on every push; no need to wait for a free Mac
+    needs: [windows-setup, sources]
     runs-on: ubuntu-latest
     permissions:
       contents: write  # only this job may change releases

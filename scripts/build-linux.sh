@@ -1,10 +1,9 @@
-#!/usr/bin/env sh
-# Builds the Interceptium executable into dist/
+#!/bin/sh
+# Builds Interceptium for Linux. Needs Rust (https://rustup.rs).
+# Output: dist/interceptium
 set -e
 cd "$(dirname "$0")/.."
-python3 -m venv .venv
-. .venv/bin/activate
-python -m pip install -r requirements-build.txt
-python -m unittest discover -s tests
-python tools/build.py
-echo "Done: see dist/"
+cargo build --release --locked
+mkdir -p dist
+cp target/release/interceptium dist/interceptium
+echo "Built dist/interceptium"
