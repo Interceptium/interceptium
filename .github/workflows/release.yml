@@ -66,6 +66,39 @@ jobs:
           Copy-Item target\release\interceptium.exe "dist\Interceptium-Setup-$version.exe"
           Get-Item dist\*.exe | Format-Table Name, Length
 
+      # Code signing through SignPath Foundation (see SIGNING.md). Skipped until the
+      # SIGNPATH_* variables and the SIGNPATH_API_TOKEN secret are set in the repository.
+      - name: Upload the unsigned exe for signing
+        id: unsigned
+        if: vars.SIGNPATH_ORGANIZATION_ID != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-unsigned
+          path: dist/Interceptium-Setup-*.exe
+          if-no-files-found: error
+      - name: Sign with SignPath (waits for approval)
+        if: vars.SIGNPATH_ORGANIZATION_ID != ''
+        uses: signpath/github-action-submit-signing-request@v1
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG }}
+          signing-policy-slug: ${{ vars.SIGNPATH_POLICY_SLUG }}
+          github-artifact-id: ${{ steps.unsigned.outputs.artifact-id }}
+          wait-for-completion: true
+          wait-for-completion-timeout-in-seconds: 3600
+          output-artifact-directory: signed
+      - name: Use the signed exe
+        if: vars.SIGNPATH_ORGANIZATION_ID != ''
+        shell: pwsh
+        run: |
+          $signed = Get-ChildItem signed -Recurse -Filter 'Interceptium-Setup-*.exe' | Select-Object -First 1
+          if (-not $signed) { throw 'SignPath returned no exe' }
+          $sig = Get-AuthenticodeSignature $signed.FullName
+          Write-Host "signature: $($sig.Status) by $($sig.SignerCertificate.Subject)"
+          if ($sig.Status -ne 'Valid') { throw "signature is $($sig.Status)" }
+          Copy-Item $signed.FullName dist\ -Force
+
       - name: Scan with Microsoft Defender (fails on any detection)
         shell: pwsh
         timeout-minutes: 15
