@@ -53,6 +53,9 @@ jobs:
   windows-setup:
     if: github.event_name != 'workflow_dispatch' || inputs.reuse_run == ''
     runs-on: windows-latest
+    env:
+      # Your own code-signing certificate (see SIGNING.md). Empty = build unsigned.
+      HAS_PFX: ${{ secrets.SIGNING_PFX_BASE64 != '' }}
     steps:
       - uses: actions/checkout@v4
       - name: Rust toolchain
@@ -98,6 +101,30 @@ jobs:
           Write-Host "signature: $($sig.Status) by $($sig.SignerCertificate.Subject)"
           if ($sig.Status -ne 'Valid') { throw "signature is $($sig.Status)" }
           Copy-Item $signed.FullName dist\ -Force
+
+      - name: Sign with your own certificate
+        if: env.HAS_PFX == 'true' && vars.SIGNPATH_ORGANIZATION_ID == ''
+        shell: pwsh
+        env:
+          PFX_BASE64: ${{ secrets.SIGNING_PFX_BASE64 }}
+          PFX_PASSWORD: ${{ secrets.SIGNING_PFX_PASSWORD }}
+        run: |
+          $pfx = Join-Path $env:RUNNER_TEMP 'sign.pfx'
+          [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:PFX_BASE64))
+          try {
+            $signtool = (Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin\*\x64\signtool.exe" | Sort-Object FullName | Select-Object -Last 1).FullName
+            if (-not $signtool) { throw 'signtool not found' }
+            foreach ($f in Get-ChildItem dist\*.exe) {
+              & $signtool sign /fd SHA256 /f $pfx /p $env:PFX_PASSWORD /tr http://timestamp.digicert.com /td SHA256 /d Interceptium $f.FullName
+              if ($LASTEXITCODE -ne 0) { throw "signing $($f.Name) failed" }
+              $sig = Get-AuthenticodeSignature $f.FullName
+              if (-not $sig.SignerCertificate) { throw "no signature on $($f.Name)" }
+              # A self-signed certificate isn't trusted on this build machine, so the status is not 'Valid' here.
+              Write-Host "signed $($f.Name) by $($sig.SignerCertificate.Subject), thumbprint $($sig.SignerCertificate.Thumbprint)"
+            }
+          } finally {
+            Remove-Item $pfx -Force -ErrorAction SilentlyContinue
+          }
 
       - name: Scan with Microsoft Defender (fails on any detection)
         shell: pwsh
