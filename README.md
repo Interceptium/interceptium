@@ -10,8 +10,22 @@ for an asset, Interceptium can:
 - **Remove** it, so it doesn't load.
 - **Serve a local file** from your disk in its place.
 
-Interceptium is an independent, clean-room project. It is written from scratch and shares no code with
+Interceptium is an independent, clean-room project. It is written from scratch in Rust and shares no code with
 other tools.
+
+<p align="center">
+  <img src="assets/screenshots/dark.png" width="49%" alt="Interceptium in dark mode">
+  <img src="assets/screenshots/light.png" width="49%" alt="Interceptium in light mode">
+</p>
+
+### Features
+
+- Replace, remove or serve local files for any Roblox asset, by asset ID or by asset type (`Image`, `Audio`, …)
+- Several configs at once: switch each on or off, and their rules combine
+- Imports Fleasion JSON configs as they are
+- Launches Roblox through the proxy, or reroutes Roblox started from the website
+- Dark, light or system appearance, smooth animations and an **Activity** panel that shows what was changed
+- Windows: installs, repairs, reinstalls and uninstalls itself
 
 ## Safety
 
@@ -28,7 +42,7 @@ Interceptium was designed to do one job and nothing else:
 | **No admin rights** | It doesn't edit the hosts file, system proxy settings or anything outside your user account. |
 | **Verified upstream TLS** | Connections from Interceptium to Roblox are fully certificate-checked. |
 | **Written in Rust** | Memory-safe, one self-contained program. It uses only widely used, open-source crates (rustls and ring for TLS, rcgen for certificates, tokio, serde, egui for the window), with exact versions locked in `Cargo.lock`. |
-| **Undoable** | **Remove from Roblox** (or `--remove-from-roblox`) takes the certificate and setting back out. |
+| **Undoable** | Settings > Roblox > **Remove** (or `--remove-from-roblox`) takes the certificate and setting back out. |
 
 ## Download
 
@@ -44,7 +58,8 @@ Get it from the [Releases](../../releases) page:
 | `SHA256SUMS.txt` | Checksums of the files above |
 
 Every file is built by GitHub Actions from this repository (`.github/workflows/release.yml`). Before a release is
-published, the installer is tested on Windows with a real install, repair and uninstall.
+published, the Windows exe is scanned with Microsoft Defender and tested on Windows with a real install, repair and
+uninstall.
 
 ### Windows installer
 
@@ -68,19 +83,29 @@ Interceptium.exe --repair | --reinstall | --uninstall [--remove-data] [--quiet] 
 
 1. Open Interceptium.
 2. In **Configs** (left), pick a config or press **+** to make one. Every config with its switch **on** runs, so you can mix packs.
-3. Press **Add rule** (one field per asset; **Add asset** adds another):
-   - **Assets to change:** asset IDs or asset types, for example `1234567 2345678` or `Image`.
+3. Press **Add rule**:
+   - **Name:** optional.
    - **Action:** *Replace* (with another asset ID), *Remove*, or *Local file*.
-4. Press the power button to start the proxy.
-5. Press **Launch Roblox**, or join a game from the website. With *Reroute website launches* on (in Settings), Interceptium restarts that Roblox window through the proxy.
-6. Roblox caches assets, so **clear the Roblox cache** after changing rules. *Clear cache when launching* does this for you.
+   - **Assets:** one asset ID or asset type per field, for example `1234567` or `Image`. **Add asset** adds another field.
+4. Press the round power button to start the proxy.
+5. Press **Launch Roblox**, or join a game from the website. With **Reroute website launches** on, Interceptium restarts
+   that Roblox window through the proxy.
+6. Roblox caches assets, so clear the cache after changing rules. **Clear cache on launch** does this for you.
 
-Settings > General > **Appearance** switches between Dark, Light and System (follows Windows or macOS).
+Open **Activity** at the bottom to see each replaced or removed asset. Double-click a rule to edit it; hover it to edit or delete.
+
+### Settings (gear icon, top right)
+
+| Tab | Options |
+|---|---|
+| **General** | Appearance (Dark, Light, System), Clear cache on launch, Reroute website launches, Port |
+| **Roblox** | Clear the Roblox cache, open the configs and settings folder, remove Interceptium's certificate from Roblox |
+| **Installation** | Version and location, Repair, Reinstall, Uninstall (Windows, when installed with the setup) |
 
 ## Configs and Fleasion compatibility
 
 Interceptium uses the same JSON format as Fleasion, so you can import Fleasion configs directly with the import button
-next to **Configs**, or by dropping them into the `configs` folder (Settings > Open data folder).
+next to **Configs**, or by dropping them into the `configs` folder (Settings > Roblox > **Open folder**).
 
 ```json
 {"replacement_rules": [
@@ -101,8 +126,8 @@ next to **Configs**, or by dropping them into the `configs` folder (Settings > O
 
 Which configs run is stored as `enabled_configs` in `settings.json`. Unknown keys in config files are kept when Interceptium saves.
 
-**Not supported on purpose:** `cdn` rules (`cdn_url`) would make Roblox download from third-party servers. They show up as
-*CDN URL (disabled)* and are skipped. TexturePack slot keys (`123:1`) are ignored.
+**Not supported on purpose:** `cdn` rules (`cdn_url`) would make Roblox download from third-party servers. They show a
+**CDN** tag marked *Not supported* and are skipped. TexturePack slot keys (`123:1`) are ignored.
 
 ### What happens to Roblox when you start the proxy
 
@@ -112,7 +137,7 @@ For each Roblox Player install it finds, Interceptium:
 - sets `DFFlagHttpUseEmbeddedCaCerts` to `False` in `<install>/ClientSettings/ClientAppSettings.json`, so Roblox uses that file;
 - starts Roblox with `HTTPS_PROXY=http://127.0.0.1:58443`.
 
-**Remove from Roblox** removes the first two changes again.
+Settings > Roblox > **Remove** (or `Interceptium --remove-from-roblox`) undoes the first two changes.
 
 ## Command line
 
@@ -122,6 +147,7 @@ Interceptium --headless --launch  ...and launch Roblox through it
 Interceptium --port 60000         use a different port
 Interceptium --clear-cache        delete Roblox's asset cache and exit
 Interceptium --remove-from-roblox remove Interceptium's certificate from Roblox and exit
+Interceptium --help               all options, including the Windows setup options
 ```
 
 Settings (`settings.json`) and configs (`configs/*.json`) are stored in `%LOCALAPPDATA%\Interceptium` (Windows),
@@ -134,7 +160,7 @@ Install Rust from [rustup.rs](https://rustup.rs) (on Windows, also the Visual St
 
 ```
 cargo run --release            # run it
-cargo test                     # unit and end-to-end tests
+cargo test                     # unit, setup and end-to-end proxy tests
 scripts\build-windows.bat      # Windows: dist\Interceptium-Setup-1.0.0.exe
 scripts/build-linux.sh         # Linux:   dist/interceptium
 scripts/build-macos.sh         # macOS:   dist/Interceptium
