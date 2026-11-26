@@ -1,29 +1,65 @@
 //! Colours and fonts.
 
 use egui::{Color32, FontData, FontDefinitions, FontFamily, FontId};
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 
-pub const BG: Color32 = Color32::from_rgb(0x0b, 0x0d, 0x13);
-pub const SURFACE: Color32 = Color32::from_rgb(0x11, 0x14, 0x1c);
-pub const CARD: Color32 = Color32::from_rgb(0x17, 0x1b, 0x26);
-pub const CARD_HOVER: Color32 = Color32::from_rgb(0x1d, 0x22, 0x30);
-pub const CARD_SELECTED: Color32 = Color32::from_rgb(0x18, 0x26, 0x2c);
-pub const FIELD: Color32 = Color32::from_rgb(0x0d, 0x10, 0x17);
-pub const LINE: Color32 = Color32::from_rgb(0x26, 0x2c, 0x3b);
-pub const TEXT: Color32 = Color32::from_rgb(0xec, 0xef, 0xf5);
-pub const MUTED: Color32 = Color32::from_rgb(0x8a, 0x92, 0xa5);
-pub const FAINT: Color32 = Color32::from_rgb(0x5a, 0x62, 0x75);
-pub const ACCENT: Color32 = Color32::from_rgb(0x2f, 0xd3, 0xc7);
-pub const ACCENT_HOVER: Color32 = Color32::from_rgb(0x52, 0xdd, 0xd3);
-pub const ACCENT_PRESS: Color32 = Color32::from_rgb(0x25, 0xb5, 0xaa);
-pub const ACCENT_TEXT: Color32 = Color32::from_rgb(0x04, 0x20, 0x1d);
-pub const DANGER: Color32 = Color32::from_rgb(0xff, 0x5d, 0x7a);
-pub const WARN: Color32 = Color32::from_rgb(0xf2, 0xb5, 0x4a);
-pub const BLUE: Color32 = Color32::from_rgb(0x7e, 0xa6, 0xff);
-pub const TRACK_OFF: Color32 = Color32::from_rgb(0x2d, 0x34, 0x46);
-pub const CHIP: Color32 = Color32::from_rgb(0x21, 0x27, 0x36);
-pub const GHOST: Color32 = Color32::from_rgb(0x1e, 0x23, 0x30);
-pub const GHOST_HOVER: Color32 = Color32::from_rgb(0x27, 0x2d, 0x3d);
+// Every colour has a dark and a light value. `light_amount` (0 = dark, 1 = light) is moved
+// smoothly when the appearance changes, so the whole window cross-fades between them.
+static LIGHT: AtomicU32 = AtomicU32::new(0);
+
+pub fn light_amount() -> f32 {
+    f32::from_bits(LIGHT.load(Ordering::Relaxed))
+}
+
+pub fn set_light_amount(v: f32) {
+    LIGHT.store(v.clamp(0.0, 1.0).to_bits(), Ordering::Relaxed);
+}
+
+const fn rgb(v: u32) -> Color32 {
+    Color32::from_rgb((v >> 16) as u8, (v >> 8) as u8, v as u8)
+}
+
+macro_rules! palette {
+    ($($name:ident = $dark:expr, $light:expr;)*) => {
+        $(
+            #[allow(non_snake_case)]
+            pub fn $name() -> Color32 {
+                let f = light_amount();
+                if f <= 0.0 { rgb($dark) } else if f >= 1.0 { rgb($light) } else { mix(rgb($dark), rgb($light), f) }
+            }
+        )*
+    };
+}
+
+palette! {
+    BG = 0x0b0d13, 0xf3f5f9;
+    SURFACE = 0x11141c, 0xffffff;
+    CARD = 0x171b26, 0xffffff;
+    CARD_HOVER = 0x1d2230, 0xf2f5f9;
+    CARD_SELECTED = 0x18262c, 0xe4f6f4;
+    FIELD = 0x0d1017, 0xeef1f6;
+    LINE = 0x262c3b, 0xdde2ea;
+    TEXT = 0xeceff5, 0x10141f;
+    MUTED = 0x8a92a5, 0x5b6475;
+    FAINT = 0x5a6275, 0x8a92a2;
+    ACCENT = 0x2fd3c7, 0x14b3a6;
+    ACCENT_HOVER = 0x52ddd3, 0x22c2b5;
+    ACCENT_PRESS = 0x25b5aa, 0x0f9a8f;
+    ACCENT_TEXT = 0x04201d, 0x03201c;
+    DANGER = 0xff5d7a, 0xe0365a;
+    WARN = 0xf2b54a, 0xc4860c;
+    BLUE = 0x7ea6ff, 0x3d6ddf;
+    TRACK_OFF = 0x2d3446, 0xcdd3de;
+    CHIP = 0x212736, 0xedf0f5;
+    GHOST = 0x1e2330, 0xeceff4;
+    GHOST_HOVER = 0x272d3d, 0xe1e6ee;
+}
+
+/// A shadow colour: full strength on dark, much softer on light backgrounds.
+pub fn shade(a: f32) -> Color32 {
+    alpha(Color32::BLACK, a * (1.0 - 0.72 * light_amount()))
+}
 
 const SEMI: &str = "ui-semibold";
 const MEDIUM: &str = "ui-medium";
@@ -99,15 +135,15 @@ pub fn alpha(c: Color32, a: f32) -> Color32 {
 
 pub fn apply_style(ctx: &egui::Context) {
     ctx.all_styles_mut(|s| {
-        s.visuals = egui::Visuals::dark();
-        s.visuals.panel_fill = BG;
-        s.visuals.window_fill = SURFACE;
-        s.visuals.extreme_bg_color = FIELD;
-        s.visuals.override_text_color = Some(TEXT);
-        s.visuals.selection.bg_fill = alpha(ACCENT, 0.35);
-        s.visuals.selection.stroke = egui::Stroke::new(1.0, ACCENT);
-        s.visuals.text_cursor.stroke = egui::Stroke::new(2.0, ACCENT);
-        s.visuals.hyperlink_color = ACCENT;
+        s.visuals = if light_amount() >= 0.5 { egui::Visuals::light() } else { egui::Visuals::dark() };
+        s.visuals.panel_fill = BG();
+        s.visuals.window_fill = SURFACE();
+        s.visuals.extreme_bg_color = FIELD();
+        s.visuals.override_text_color = Some(TEXT());
+        s.visuals.selection.bg_fill = alpha(ACCENT(), 0.35);
+        s.visuals.selection.stroke = egui::Stroke::new(1.0, ACCENT());
+        s.visuals.text_cursor.stroke = egui::Stroke::new(2.0, ACCENT());
+        s.visuals.hyperlink_color = ACCENT();
         s.spacing.item_spacing = egui::vec2(8.0, 8.0);
         s.spacing.scroll.bar_width = 6.0;
         s.spacing.scroll.floating = true;

@@ -75,6 +75,8 @@ Interceptium.exe --repair | --reinstall | --uninstall [--remove-data] [--quiet] 
 5. Press **Launch Roblox**, or join a game from the website. With *Reroute website launches* on (in Settings), Interceptium restarts that Roblox window through the proxy.
 6. Roblox caches assets, so **clear the Roblox cache** after changing rules. *Clear cache when launching* does this for you.
 
+Settings > General > **Appearance** switches between Dark, Light and System (follows Windows or macOS).
+
 ## Configs and Fleasion compatibility
 
 Interceptium uses the same JSON format as Fleasion, so you can import Fleasion configs directly with the import button

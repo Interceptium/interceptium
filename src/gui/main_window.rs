@@ -112,6 +112,7 @@ pub struct MainApp {
     busy: usize,
     toast: Option<Toast>,
     port_text: String,
+    appearance: usize,
     last_scan: f64,
     install_dir: Option<PathBuf>,
     #[cfg(feature = "shots")]
@@ -161,10 +162,10 @@ fn targets_text(rule: &Map<String, Value>) -> String {
 
 fn mode_color(mode: &str) -> Color32 {
     match mode {
-        "remove" => t::DANGER,
-        "local" => t::BLUE,
-        "cdn" => t::WARN,
-        _ => t::ACCENT,
+        "remove" => t::DANGER(),
+        "local" => t::BLUE(),
+        "cdn" => t::WARN(),
+        _ => t::ACCENT(),
     }
 }
 
@@ -220,6 +221,7 @@ impl MainApp {
             busy: 0,
             toast: None,
             port_text: settings.port.to_string(),
+            appearance: crate::config::THEMES.iter().position(|t| *t == settings.theme).unwrap_or(0),
             last_scan: 0.0,
             install_dir: crate::setup::install_location(),
             ctl,
@@ -611,10 +613,10 @@ impl MainApp {
         let p = ui.painter();
         let logo_rect = Rect::from_center_size(pos2(rect.left() + 20.0, rect.center().y), vec2(40.0, 40.0));
         p.image(self.logo.id(), logo_rect, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
-        p.text(pos2(rect.left() + 52.0, rect.center().y), Align2::LEFT_CENTER, "Interceptium", t::semi(21.0), t::TEXT);
+        p.text(pos2(rect.left() + 52.0, rect.center().y), Align2::LEFT_CENTER, "Interceptium", t::semi(21.0), t::TEXT());
         let right = Rect::from_min_max(pos2(rect.right() - 320.0, rect.top()), rect.max);
         let mut child = ui.new_child(UiBuilder::new().max_rect(right).layout(egui::Layout::right_to_left(egui::Align::Center)));
-        if widgets::icon_button(&mut child, "gear", Icon::Gear, 38.0, t::TEXT, "Settings").clicked() {
+        if widgets::icon_button(&mut child, "gear", Icon::Gear, 38.0, t::TEXT(), "Settings").clicked() {
             acts.push(Act::OpenSettings);
         }
         child.add_space(6.0);
@@ -633,7 +635,7 @@ impl MainApp {
         // proxy card
         let card_h = 356.0;
         let proxy = Rect::from_min_size(rect.min, vec2(rect.width(), card_h));
-        widgets::panel(ui.painter(), proxy, 22, t::CARD);
+        widgets::panel(ui.painter(), proxy, 22, t::CARD());
         let mut c = ui.new_child(UiBuilder::new().max_rect(proxy.shrink(18.0)).layout(egui::Layout::top_down(egui::Align::Center)));
         c.add_space(6.0);
         if widgets::power_button(&mut c, running, self.busy > 0).clicked() {
@@ -641,8 +643,8 @@ impl MainApp {
         }
         c.add_space(6.0);
         let on = tween_bool(c.ctx(), Id::unique("run-text"), running, 0.3);
-        widgets::label(&mut c, if running { "Proxy running" } else { "Proxy off" }, t::semi(15.0), mix(t::MUTED, t::TEXT, on));
-        widgets::label(&mut c, &self.ctl.proxy_url().trim_start_matches("http://").to_string(), t::mono(12.5), t::FAINT);
+        widgets::label(&mut c, if running { "Proxy running" } else { "Proxy off" }, t::semi(15.0), mix(t::MUTED(), t::TEXT(), on));
+        widgets::label(&mut c, &self.ctl.proxy_url().trim_start_matches("http://").to_string(), t::mono(12.5), t::FAINT());
         c.add_space(10.0);
         let w = c.available_width();
         if widgets::button(&mut c, "launch", "Launch Roblox", Some(Icon::Play), Kind::Primary, w, 42.0, self.busy == 0).clicked() {
@@ -654,14 +656,14 @@ impl MainApp {
 
         // configs card
         let list = Rect::from_min_max(pos2(rect.left(), proxy.bottom() + 16.0), rect.max);
-        widgets::panel(ui.painter(), list, 22, t::CARD);
+        widgets::panel(ui.painter(), list, 22, t::CARD());
         let head = Rect::from_min_size(list.min + vec2(18.0, 12.0), vec2(list.width() - 30.0, 36.0));
-        ui.painter().text(pos2(head.left(), head.center().y), Align2::LEFT_CENTER, "Configs", t::semi(15.0), t::TEXT);
+        ui.painter().text(pos2(head.left(), head.center().y), Align2::LEFT_CENTER, "Configs", t::semi(15.0), t::TEXT());
         let mut hc = ui.new_child(UiBuilder::new().max_rect(head).layout(egui::Layout::right_to_left(egui::Align::Center)));
-        if widgets::icon_button(&mut hc, "new-config", Icon::Plus, 32.0, t::ACCENT, "New config").clicked() {
+        if widgets::icon_button(&mut hc, "new-config", Icon::Plus, 32.0, t::ACCENT(), "New config").clicked() {
             acts.push(Act::NewConfig);
         }
-        if widgets::icon_button(&mut hc, "import", Icon::Import, 32.0, t::TEXT, "Import").clicked() {
+        if widgets::icon_button(&mut hc, "import", Icon::Import, 32.0, t::TEXT(), "Import").clicked() {
             acts.push(Act::Import);
         }
         let body = Rect::from_min_max(pos2(list.left() + 8.0, head.bottom() + 6.0), pos2(list.right() - 8.0, list.bottom() - 8.0));
@@ -704,22 +706,22 @@ impl MainApp {
         let hover = tween_bool(&ctx, id.with("hover"), resp.hovered() && !gone, 0.14);
         let painter = ui.painter().with_clip_rect(rect.intersect(ui.clip_rect()));
         let body = Rect::from_min_size(rect.min, vec2(rect.width(), full_h)).translate(vec2(0.0, (h - full_h) / 2.0));
-        let bg = mix(mix(alpha(t::CARD_HOVER, 0.0), t::CARD_HOVER, hover), t::CARD_SELECTED, sel);
+        let bg = mix(mix(alpha(t::CARD_HOVER(), 0.0), t::CARD_HOVER(), hover), t::CARD_SELECTED(), sel);
         if sel > 0.01 || hover > 0.01 {
-            widgets::shadow(&painter, body, 16, 14.0, 3.0, alpha(Color32::BLACK, (0.30 * sel + 0.15 * hover) * grow));
+            widgets::shadow(&painter, body, 16, 14.0, 3.0, t::shade((0.30 * sel + 0.15 * hover) * grow));
         }
         painter.rect_filled(body, CornerRadius::same(16), bg.gamma_multiply(grow));
         if sel > 0.01 {
             let bar = Rect::from_center_size(pos2(body.left() + 4.0, body.center().y), vec2(3.0, 24.0 * sel));
-            painter.rect_filled(bar, CornerRadius::same(2), alpha(t::ACCENT, sel * grow));
+            painter.rect_filled(bar, CornerRadius::same(2), alpha(t::ACCENT(), sel * grow));
         }
         let info = self.info.get(name).cloned();
         let fade = grow;
         let text_w = body.width() - 90.0;
         let title = widgets::elide(ui, name, &t::semi(14.0), text_w);
-        painter.text(pos2(body.left() + 16.0, body.top() + 20.0), Align2::LEFT_CENTER, title, t::semi(14.0), t::TEXT.gamma_multiply(fade));
+        painter.text(pos2(body.left() + 16.0, body.top() + 20.0), Align2::LEFT_CENTER, title, t::semi(14.0), t::TEXT().gamma_multiply(fade));
         let count = info.map(|i| plural(i.total, "rule")).unwrap_or_default();
-        painter.text(pos2(body.left() + 16.0, body.top() + 39.0), Align2::LEFT_CENTER, count, t::regular(12.5), t::MUTED.gamma_multiply(fade));
+        painter.text(pos2(body.left() + 16.0, body.top() + 39.0), Align2::LEFT_CENTER, count, t::regular(12.5), t::MUTED().gamma_multiply(fade));
         if !gone {
             let mut enabled = self.ctl.config.is_enabled(name);
             let toggle_rect = Rect::from_center_size(pos2(body.right() - 34.0, body.center().y), vec2(40.0, 22.0));
@@ -734,16 +736,16 @@ impl MainApp {
     }
 
     fn rules_panel(&mut self, ui: &mut Ui, rect: Rect, acts: &mut Vec<Act>) {
-        widgets::panel(ui.painter(), rect, 22, t::CARD);
+        widgets::panel(ui.painter(), rect, 22, t::CARD());
         let inner = rect.shrink2(vec2(22.0, 18.0));
         let ctx = ui.ctx().clone();
         let fade = tween_from(&ctx, Id::unique("rules-fade"), 0.0, 1.0, 0.25, anim::ease_out_cubic);
         let (total, on) = self.info.get(&self.selected).map(|i| (i.total, i.on)).unwrap_or((0, 0));
         let head = Rect::from_min_size(inner.min, vec2(inner.width(), 52.0));
         let title = if self.selected.is_empty() { "No config".to_string() } else { widgets::elide(ui, &self.selected, &t::semi(22.0), head.width() - 330.0) };
-        ui.painter().text(pos2(head.left(), head.top() + 15.0), Align2::LEFT_CENTER, title, t::semi(22.0), t::TEXT.gamma_multiply(fade));
+        ui.painter().text(pos2(head.left(), head.top() + 15.0), Align2::LEFT_CENTER, title, t::semi(22.0), t::TEXT().gamma_multiply(fade));
         let sub = format!("{}, {} enabled", plural(total, "rule"), on);
-        ui.painter().text(pos2(head.left(), head.top() + 40.0), Align2::LEFT_CENTER, sub, t::regular(13.0), t::MUTED.gamma_multiply(fade));
+        ui.painter().text(pos2(head.left(), head.top() + 40.0), Align2::LEFT_CENTER, sub, t::regular(13.0), t::MUTED().gamma_multiply(fade));
         let mut hc = ui.new_child(UiBuilder::new().max_rect(head).layout(egui::Layout::right_to_left(egui::Align::Center)));
         let has = !self.selected.is_empty();
         if widgets::button(&mut hc, "add-rule", "Add rule", Some(Icon::Plus), Kind::Primary, 0.0, 40.0, has).clicked() {
@@ -751,13 +753,13 @@ impl MainApp {
         }
         hc.add_space(6.0);
         if has {
-            if widgets::icon_button(&mut hc, "del-config", Icon::Trash, 36.0, t::DANGER, "Delete config").clicked() {
+            if widgets::icon_button(&mut hc, "del-config", Icon::Trash, 36.0, t::DANGER(), "Delete config").clicked() {
                 acts.push(Act::DeleteConfig);
             }
-            if widgets::icon_button(&mut hc, "export", Icon::Export, 36.0, t::TEXT, "Export").clicked() {
+            if widgets::icon_button(&mut hc, "export", Icon::Export, 36.0, t::TEXT(), "Export").clicked() {
                 acts.push(Act::Export);
             }
-            if widgets::icon_button(&mut hc, "rename", Icon::Pencil, 36.0, t::TEXT, "Rename").clicked() {
+            if widgets::icon_button(&mut hc, "rename", Icon::Pencil, 36.0, t::TEXT(), "Rename").clicked() {
                 acts.push(Act::Rename);
             }
         }
@@ -765,7 +767,7 @@ impl MainApp {
         let search_rect = Rect::from_min_size(pos2(inner.left(), head.bottom() + 12.0), vec2(inner.width(), 40.0));
         let mut sc = ui.new_child(UiBuilder::new().max_rect(search_rect));
         widgets::text_field(&mut sc, "search", &mut self.search, "Search rules", search_rect.width());
-        icons::draw(ui.painter(), Icon::Search, pos2(search_rect.right() - 22.0, search_rect.center().y), 16.0, t::FAINT);
+        icons::draw(ui.painter(), Icon::Search, pos2(search_rect.right() - 22.0, search_rect.center().y), 16.0, t::FAINT());
 
         let list = Rect::from_min_max(pos2(inner.left() - 6.0, search_rect.bottom() + 12.0), pos2(inner.right() + 6.0, rect.bottom() - 10.0));
         let mut lc = ui.new_child(UiBuilder::new().max_rect(list));
@@ -796,18 +798,18 @@ impl MainApp {
     }
 
     fn log_panel(&mut self, ui: &mut Ui, rect: Rect, open: f32, acts: &mut Vec<Act>) {
-        widgets::panel(ui.painter(), rect, 18, t::SURFACE);
+        widgets::panel(ui.painter(), rect, 18, t::SURFACE());
         let head = Rect::from_min_size(rect.min, vec2(rect.width(), 40.0));
         let resp = ui.interact(head, Id::unique("log-head"), Sense::click()).on_hover_cursor(egui::CursorIcon::PointingHand);
         if resp.clicked() {
             acts.push(Act::ToggleLog);
         }
         let hover = tween_bool(ui.ctx(), Id::unique("log-hover"), resp.hovered(), 0.14);
-        ui.painter().text(pos2(head.left() + 18.0, head.center().y), Align2::LEFT_CENTER, "Activity", t::semi(13.5), mix(t::MUTED, t::TEXT, hover));
+        ui.painter().text(pos2(head.left() + 18.0, head.center().y), Align2::LEFT_CENTER, "Activity", t::semi(13.5), mix(t::MUTED(), t::TEXT(), hover));
         let last = self.log.last().cloned().unwrap_or_default();
         if open < 0.5 && !last.is_empty() {
             let shown = widgets::elide(ui, &last, &t::mono(12.0), head.width() - 180.0);
-            ui.painter().text(pos2(head.left() + 100.0, head.center().y), Align2::LEFT_CENTER, shown, t::mono(12.0), t::FAINT.gamma_multiply(1.0 - open * 2.0));
+            ui.painter().text(pos2(head.left() + 100.0, head.center().y), Align2::LEFT_CENTER, shown, t::mono(12.0), t::FAINT().gamma_multiply(1.0 - open * 2.0));
         }
         // chevron turns as the panel opens
         let c = pos2(head.right() - 24.0, head.center().y);
@@ -815,7 +817,7 @@ impl MainApp {
         let pts = [vec2(-5.0, 2.5), vec2(0.0, -2.5), vec2(5.0, 2.5)];
         let rot = egui::emath::Rot2::from_angle(angle + std::f32::consts::PI);
         let pts: Vec<egui::Pos2> = pts.iter().map(|v| c + rot * *v).collect();
-        ui.painter().add(egui::Shape::line(pts, Stroke::new(1.8, mix(t::MUTED, t::TEXT, hover))));
+        ui.painter().add(egui::Shape::line(pts, Stroke::new(1.8, mix(t::MUTED(), t::TEXT(), hover))));
         if open > 0.01 {
             let body = Rect::from_min_max(pos2(rect.left() + 14.0, head.bottom()), pos2(rect.right() - 10.0, rect.bottom() - 10.0));
             let mut bc = ui.new_child(UiBuilder::new().max_rect(body));
@@ -824,7 +826,7 @@ impl MainApp {
                 ui.spacing_mut().item_spacing.y = 2.0;
                 let start = self.log.len().saturating_sub(400);
                 for line in &self.log[start..] {
-                    ui.add(egui::Label::new(egui::RichText::new(line).font(t::mono(12.0)).color(t::MUTED)).wrap());
+                    ui.add(egui::Label::new(egui::RichText::new(line).font(t::mono(12.0)).color(t::MUTED())).wrap());
                 }
             });
         }
@@ -851,11 +853,11 @@ impl MainApp {
         let area = rect.shrink(22.0);
         let header = Rect::from_min_size(area.min, vec2(area.width(), 46.0));
         let mut hc = ui.new_child(UiBuilder::new().max_rect(header).layout(egui::Layout::left_to_right(egui::Align::Center)));
-        if widgets::icon_button(&mut hc, "back", Icon::Back, 38.0, t::TEXT, "Back").clicked() {
+        if widgets::icon_button(&mut hc, "back", Icon::Back, 38.0, t::TEXT(), "Back").clicked() {
             acts.push(Act::CloseSettings);
         }
         hc.add_space(6.0);
-        widgets::label(&mut hc, "Settings", t::semi(21.0), t::TEXT);
+        widgets::label(&mut hc, "Settings", t::semi(21.0), t::TEXT());
         if ui.input(|i| i.key_pressed(egui::Key::Escape)) && self.popups.is_empty() {
             acts.push(Act::CloseSettings);
         }
@@ -890,14 +892,14 @@ impl MainApp {
     fn setting_row(ui: &mut Ui, width: f32, title: &str, detail: &str, first: bool, control: impl FnOnce(&mut Ui)) {
         if !first {
             let (r, _) = ui.allocate_exact_size(vec2(width - 32.0, 1.0), Sense::hover());
-            ui.painter().rect_filled(r, CornerRadius::ZERO, alpha(t::LINE, 0.7));
+            ui.painter().rect_filled(r, CornerRadius::ZERO, alpha(t::LINE(), 0.7));
         }
         let (rect, _) = ui.allocate_exact_size(vec2(width - 32.0, 64.0), Sense::hover());
         let ty = if detail.is_empty() { rect.center().y } else { rect.center().y - 9.0 };
-        ui.painter().text(pos2(rect.left(), ty), Align2::LEFT_CENTER, title, t::semi(14.5), t::TEXT);
+        ui.painter().text(pos2(rect.left(), ty), Align2::LEFT_CENTER, title, t::semi(14.5), t::TEXT());
         if !detail.is_empty() {
             let d = widgets::elide(ui, detail, &t::regular(12.5), rect.width() - 240.0);
-            ui.painter().text(pos2(rect.left(), rect.center().y + 11.0), Align2::LEFT_CENTER, d, t::regular(12.5), t::MUTED);
+            ui.painter().text(pos2(rect.left(), rect.center().y + 11.0), Align2::LEFT_CENTER, d, t::regular(12.5), t::MUTED());
         }
         let mut c = ui.new_child(UiBuilder::new().max_rect(rect).layout(egui::Layout::right_to_left(egui::Align::Center)));
         control(&mut c);
@@ -908,8 +910,16 @@ impl MainApp {
         widgets::card().show(ui, |ui| {
             ui.set_width(w - 34.0);
             ui.spacing_mut().item_spacing.y = 0.0;
+            let mut appearance = self.appearance;
+            Self::setting_row(ui, w, "Appearance", "Window colours", true, |ui| {
+                if widgets::segmented(ui, "appearance", &["Dark", "Light", "System"], &mut appearance, 270.0) {
+                    let choice = crate::config::THEMES[appearance.min(2)].to_string();
+                    self.ctl.config.update_settings(|s| s.theme = choice);
+                }
+            });
+            self.appearance = appearance;
             let mut clear = s.clear_cache_on_launch;
-            Self::setting_row(ui, w, "Clear cache on launch", "Roblox loads replaced assets fresh", true, |ui| {
+            Self::setting_row(ui, w, "Clear cache on launch", "Roblox loads replaced assets fresh", false, |ui| {
                 if widgets::toggle(ui, "set-clear", &mut clear).changed() {
                     self.ctl.config.update_settings(|s| s.clear_cache_on_launch = clear);
                 }
@@ -961,12 +971,12 @@ impl MainApp {
             ui.set_width(w - 34.0);
             ui.spacing_mut().item_spacing.y = 0.0;
             Self::setting_row(ui, w, "Version", "", true, |ui| {
-                widgets::label(ui, crate::VERSION, t::semi(14.0), t::MUTED);
+                widgets::label(ui, crate::VERSION, t::semi(14.0), t::MUTED());
             });
             let loc = dir.as_ref().map(|d| d.to_string_lossy().into_owned()).unwrap_or_else(|| "Not installed with Interceptium Setup".into());
             Self::setting_row(ui, w, "Location", &loc, false, |ui| {
                 if let Some(d) = &dir {
-                    if widgets::icon_button(ui, "open-install", Icon::Folder, 36.0, t::TEXT, "Open folder").clicked() {
+                    if widgets::icon_button(ui, "open-install", Icon::Folder, 36.0, t::TEXT(), "Open folder").clicked() {
                         open_path(d);
                     }
                 }
@@ -1005,7 +1015,7 @@ impl MainApp {
                 PopupKind::Prompt { title, ok, value, error, .. } => {
                     let mut enter = false;
                     let ev = popup::show(ctx, &p.shell, vis, 420.0, title, ok, Kind::Primary, |ui| {
-                        widgets::label(ui, "Name", t::semi(12.5), t::MUTED);
+                        widgets::label(ui, "Name", t::semi(12.5), t::MUTED());
                         let r = widgets::text_field(ui, ("prompt", p.shell.id), value, "Config name", 420.0);
                         if !p.shell.is_closing() && anim::progress(ui.ctx(), p.shell.opened, 0.05, |x| x) < 1.0 {
                             r.request_focus();
@@ -1014,13 +1024,13 @@ impl MainApp {
                             enter = true;
                         }
                         if !error.is_empty() {
-                            widgets::label(ui, error, t::regular(12.5), t::DANGER);
+                            widgets::label(ui, error, t::regular(12.5), t::DANGER());
                         }
                     });
                     if enter { Event::Ok } else { ev }
                 }
                 PopupKind::Confirm { title, message, ok, danger, .. } => popup::show(ctx, &p.shell, vis, 420.0, title, ok, if *danger { Kind::Danger } else { Kind::Primary }, |ui| {
-                    ui.add(egui::Label::new(egui::RichText::new(message.as_str()).font(t::regular(14.0)).color(t::MUTED)).wrap());
+                    ui.add(egui::Label::new(egui::RichText::new(message.as_str()).font(t::regular(14.0)).color(t::MUTED())).wrap());
                 }),
                 PopupKind::Rule(ed) => {
                     let title = if ed.path.is_some() { "Edit rule" } else { "New rule" };
@@ -1065,14 +1075,14 @@ impl MainApp {
         egui::Area::new(Id::unique("toast")).order(egui::Order::Tooltip).anchor(Align2::CENTER_BOTTOM, vec2(0.0, -86.0 + (1.0 - vis) * 20.0)).interactable(false).show(ctx, |ui| {
             ui.multiply_opacity(vis);
             egui::Frame::new()
-                .fill(if error { mix(t::SURFACE, t::DANGER, 0.16) } else { t::CARD_HOVER })
-                .stroke(Stroke::new(1.0, if error { alpha(t::DANGER, 0.5) } else { t::LINE }))
+                .fill(if error { mix(t::SURFACE(), t::DANGER(), 0.16) } else { t::CARD_HOVER() })
+                .stroke(Stroke::new(1.0, if error { alpha(t::DANGER(), 0.5) } else { t::LINE() }))
                 .corner_radius(CornerRadius::same(18))
-                .shadow(egui::Shadow { offset: [0, 8], blur: 24, spread: 0, color: alpha(Color32::BLACK, 0.4) })
+                .shadow(egui::Shadow { offset: [0, 8], blur: 24, spread: 0, color: t::shade(0.4) })
                 .inner_margin(egui::Margin::symmetric(18, 11))
                 .show(ui, |ui| {
                     ui.set_max_width(screen.width() * 0.6);
-                    widgets::label(ui, &text, t::regular(13.5), if error { t::DANGER } else { t::TEXT });
+                    widgets::label(ui, &text, t::regular(13.5), if error { t::DANGER() } else { t::TEXT() });
                 });
         });
     }
@@ -1121,19 +1131,19 @@ fn group(ui: &mut Ui, e: &Value, path: &mut Path_, depth: usize, acts: &mut Vec<
     }
     let openness = state.openness(ui.ctx());
     let r = rect.shrink2(vec2(6.0, 0.0));
-    ui.painter().rect_filled(r, CornerRadius::same(12), alpha(t::CARD_HOVER, hover));
+    ui.painter().rect_filled(r, CornerRadius::same(12), alpha(t::CARD_HOVER(), hover));
     let c = pos2(r.left() + 18.0 + indent, r.center().y);
     let rot = egui::emath::Rot2::from_angle(std::f32::consts::FRAC_PI_2 * openness);
     let pts: Vec<egui::Pos2> = [vec2(-2.5, -5.0), vec2(2.5, 0.0), vec2(-2.5, 5.0)].iter().map(|v| c + rot * *v).collect();
-    ui.painter().add(egui::Shape::line(pts, Stroke::new(1.8, t::MUTED)));
-    let label = ui.painter().layout_no_wrap(name, t::semi(14.0), t::TEXT);
+    ui.painter().add(egui::Shape::line(pts, Stroke::new(1.8, t::MUTED())));
+    let label = ui.painter().layout_no_wrap(name, t::semi(14.0), t::TEXT());
     let lw = label.size().x;
-    ui.painter().galley(pos2(c.x + 16.0, r.center().y - label.size().y / 2.0), label, t::TEXT);
+    ui.painter().galley(pos2(c.x + 16.0, r.center().y - label.size().y / 2.0), label, t::TEXT());
     let badge_c = pos2(c.x + 16.0 + lw + 20.0, r.center().y);
-    let bt = ui.painter().layout_no_wrap(count.to_string(), t::semi(11.5), t::MUTED);
+    let bt = ui.painter().layout_no_wrap(count.to_string(), t::semi(11.5), t::MUTED());
     let br = Rect::from_center_size(badge_c, vec2(bt.size().x + 14.0, 20.0));
-    ui.painter().rect_filled(br, CornerRadius::same(10), t::CHIP);
-    ui.painter().galley(br.center() - bt.size() / 2.0, bt, t::MUTED);
+    ui.painter().rect_filled(br, CornerRadius::same(10), t::CHIP());
+    ui.painter().galley(br.center() - bt.size() / 2.0, bt, t::MUTED());
     resp.on_hover_cursor(egui::CursorIcon::PointingHand);
     state.store(ui.ctx());
     let mut state = egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), id, true);
@@ -1155,9 +1165,9 @@ fn rule_card(ui: &mut Ui, path: &Path_, rule: &Map<String, Value>, depth: usize,
     let enabled = rule.get("enabled").map(rules::truthy).unwrap_or(true);
     let on = tween_bool(ui.ctx(), id.with("on"), enabled, 0.2);
     let rect = rect.translate(vec2(0.0, -1.5 * hover));
-    widgets::shadow(ui.painter(), rect, 16, 10.0 + 12.0 * hover, 2.0 + 4.0 * hover, alpha(Color32::BLACK, 0.22 + 0.20 * hover));
-    ui.painter().rect_filled(rect, CornerRadius::same(16), mix(t::SURFACE, t::CARD_HOVER, hover));
-    ui.painter().rect_stroke(rect, CornerRadius::same(16), Stroke::new(1.0, mix(alpha(t::LINE, 0.5), t::LINE, hover)), StrokeKind::Inside);
+    widgets::shadow(ui.painter(), rect, 16, 10.0 + 12.0 * hover, 2.0 + 4.0 * hover, t::shade(0.22 + 0.20 * hover));
+    ui.painter().rect_filled(rect, CornerRadius::same(16), mix(t::SURFACE(), t::CARD_HOVER(), hover));
+    ui.painter().rect_stroke(rect, CornerRadius::same(16), Stroke::new(1.0, mix(alpha(t::LINE(), 0.5), t::LINE(), hover)), StrokeKind::Inside);
     let mut en = enabled;
     let toggle = Rect::from_center_size(pos2(rect.left() + 36.0, rect.center().y), vec2(40.0, 22.0));
     let mut tc = ui.new_child(UiBuilder::new().max_rect(toggle));
@@ -1175,25 +1185,25 @@ fn rule_card(ui: &mut Ui, path: &Path_, rule: &Map<String, Value>, depth: usize,
     let mut right_edge = chip_rect.left() - 12.0;
     if !detail.is_empty() {
         let d = widgets::elide(ui, &detail, &t::mono(12.0), 170.0);
-        let g = ui.painter().layout_no_wrap(d, t::mono(12.0), t::MUTED);
+        let g = ui.painter().layout_no_wrap(d, t::mono(12.0), t::MUTED());
         let w = g.size().x;
-        ui.painter().galley(pos2(right_edge - w, rect.center().y - g.size().y / 2.0), g, t::MUTED.gamma_multiply(0.6 + 0.4 * on));
+        ui.painter().galley(pos2(right_edge - w, rect.center().y - g.size().y / 2.0), g, t::MUTED().gamma_multiply(0.6 + 0.4 * on));
         right_edge -= w + 12.0;
     }
     let tx = rect.left() + 72.0;
     let name = rule.get("name").and_then(Value::as_str).filter(|s| !s.is_empty()).unwrap_or("Rule");
     let name = widgets::elide(ui, name, &t::semi(14.5), (right_edge - tx).max(40.0));
-    ui.painter().text(pos2(tx, rect.top() + 24.0), Align2::LEFT_CENTER, name, t::semi(14.5), mix(t::MUTED, t::TEXT, on));
+    ui.painter().text(pos2(tx, rect.top() + 24.0), Align2::LEFT_CENTER, name, t::semi(14.5), mix(t::MUTED(), t::TEXT(), on));
     let targets = widgets::elide(ui, &targets_text(rule), &t::regular(12.5), (right_edge - tx).max(40.0));
-    ui.painter().text(pos2(tx, rect.top() + 45.0), Align2::LEFT_CENTER, targets, t::regular(12.5), t::FAINT);
+    ui.painter().text(pos2(tx, rect.top() + 45.0), Align2::LEFT_CENTER, targets, t::regular(12.5), t::FAINT());
     if hover > 0.02 {
         let ir = Rect::from_min_max(pos2(rect.right() - 12.0 - icons_w, rect.top()), pos2(rect.right() - 10.0, rect.bottom()));
         let mut ic = ui.new_child(UiBuilder::new().max_rect(ir).layout(egui::Layout::right_to_left(egui::Align::Center)));
         ic.multiply_opacity(hover);
-        if widgets::icon_button(&mut ic, ("rule-del", path.clone()), Icon::Trash, 34.0, t::DANGER, "Delete").clicked() {
+        if widgets::icon_button(&mut ic, ("rule-del", path.clone()), Icon::Trash, 34.0, t::DANGER(), "Delete").clicked() {
             acts.push(Act::DeleteRule(path.clone()));
         }
-        if widgets::icon_button(&mut ic, ("rule-edit", path.clone()), Icon::Pencil, 34.0, t::TEXT, "Edit").clicked() {
+        if widgets::icon_button(&mut ic, ("rule-edit", path.clone()), Icon::Pencil, 34.0, t::TEXT(), "Edit").clicked() {
             acts.push(Act::EditRule(path.clone()));
         }
     }
@@ -1206,10 +1216,10 @@ fn empty_state(ui: &mut Ui, title: &str, button: Option<&str>, acts: &mut Vec<Ac
     ui.add_space(70.0);
     ui.vertical_centered(|ui| {
         let (r, _) = ui.allocate_exact_size(vec2(64.0, 64.0), Sense::hover());
-        ui.painter().circle_filled(r.center(), 32.0, t::SURFACE);
-        icons::draw(ui.painter(), Icon::Box, r.center(), 28.0, t::FAINT);
+        ui.painter().circle_filled(r.center(), 32.0, t::SURFACE());
+        icons::draw(ui.painter(), Icon::Box, r.center(), 28.0, t::FAINT());
         ui.add_space(6.0);
-        widgets::label(ui, title, t::semi(15.0), t::MUTED);
+        widgets::label(ui, title, t::semi(15.0), t::MUTED());
         if let Some(b) = button {
             ui.add_space(8.0);
             if widgets::button(ui, "empty-add", b, Some(Icon::Plus), Kind::Primary, 0.0, 40.0, true).clicked() {
@@ -1221,15 +1231,15 @@ fn empty_state(ui: &mut Ui, title: &str, button: Option<&str>, acts: &mut Vec<Ac
 
 fn rule_editor(ui: &mut Ui, shell_id: u64, ed: &mut RuleEditor, ctl: &Arc<Controller>) {
     let w = 500.0;
-    widgets::label(ui, "Name", t::semi(12.5), t::MUTED);
+    widgets::label(ui, "Name", t::semi(12.5), t::MUTED());
     widgets::text_field(ui, ("rule-name", shell_id), &mut ed.name, "Optional", w);
     ui.add_space(4.0);
-    widgets::label(ui, "Action", t::semi(12.5), t::MUTED);
+    widgets::label(ui, "Action", t::semi(12.5), t::MUTED());
     if widgets::segmented(ui, ("rule-mode", shell_id), &["Replace", "Remove", "Local file"], &mut ed.mode, w) {
         ed.error.clear();
     }
     ui.add_space(4.0);
-    widgets::label(ui, "Assets", t::semi(12.5), t::MUTED);
+    widgets::label(ui, "Assets", t::semi(12.5), t::MUTED());
     let mut remove = None;
     let count = ed.assets.len();
     for (index, (aid, value)) in ed.assets.iter_mut().enumerate() {
@@ -1241,12 +1251,12 @@ fn rule_editor(ui: &mut Ui, shell_id: u64, ed: &mut RuleEditor, ctl: &Arc<Contro
         rc.multiply_opacity(grow);
         let label = format!("Asset {}", index + 1);
         let lr = rc.allocate_exact_size(vec2(64.0, 40.0), Sense::hover()).0;
-        rc.painter().text(pos2(lr.left(), lr.center().y), Align2::LEFT_CENTER, label, t::semi(12.5), t::FAINT);
+        rc.painter().text(pos2(lr.left(), lr.center().y), Align2::LEFT_CENTER, label, t::semi(12.5), t::FAINT());
         let field_w = if count > 1 { w - 64.0 - 46.0 } else { w - 64.0 };
         widgets::text_field(&mut rc, ("asset", shell_id, *aid), value, "Asset ID or type, like Image", field_w);
         if count > 1 {
             rc.add_space(6.0);
-            if widgets::icon_button(&mut rc, ("asset-x", shell_id, *aid), Icon::Close, 34.0, t::DANGER, "").clicked() {
+            if widgets::icon_button(&mut rc, ("asset-x", shell_id, *aid), Icon::Close, 34.0, t::DANGER(), "").clicked() {
                 remove = Some(index);
             }
         }
@@ -1270,7 +1280,7 @@ fn rule_editor(ui: &mut Ui, shell_id: u64, ed: &mut RuleEditor, ctl: &Arc<Contro
         vc.multiply_opacity(show);
         vc.spacing_mut().item_spacing.y = 8.0;
         let local = ed.mode == 2;
-        widgets::label(&mut vc, if local { "File" } else { "Replacement asset ID" }, t::semi(12.5), t::MUTED);
+        widgets::label(&mut vc, if local { "File" } else { "Replacement asset ID" }, t::semi(12.5), t::MUTED());
         vc.horizontal(|ui| {
             if local {
                 widgets::text_field(ui, ("rule-value", shell_id), &mut ed.value, "Path to a file", w - 110.0);
@@ -1289,7 +1299,7 @@ fn rule_editor(ui: &mut Ui, shell_id: u64, ed: &mut RuleEditor, ctl: &Arc<Contro
         });
     }
     if !ed.error.is_empty() {
-        widgets::label(ui, &ed.error, t::regular(12.5), t::DANGER);
+        widgets::label(ui, &ed.error, t::regular(12.5), t::DANGER());
     }
 }
 
@@ -1315,8 +1325,9 @@ impl eframe::App for MainApp {
             self.last_scan = now;
             self.scan_configs();
         }
+        super::update_appearance(&ctx, crate::config::THEMES[self.appearance.min(2)]);
         let rect = ui.max_rect();
-        ui.painter().rect_filled(rect, CornerRadius::ZERO, t::BG);
+        ui.painter().rect_filled(rect, CornerRadius::ZERO, t::BG());
         let mut acts = Vec::new();
         let stage = tween_from(&ctx, Id::unique("stage"), 0.0, if self.settings_open { 1.0 } else { 0.0 }, 0.36, anim::ease_in_out_cubic);
         let modal = !self.popups.is_empty();
@@ -1367,6 +1378,9 @@ impl MainApp {
             ed.assets = vec![(0, "1234567".into()), (1, "Image".into())];
             ed.value = "7654321".into();
         }
+    }
+    pub fn shot_light(&mut self) {
+        self.appearance = 1;
     }
     pub fn shot_log(&mut self) {
         self.log_open = true;

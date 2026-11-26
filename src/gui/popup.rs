@@ -64,7 +64,7 @@ pub fn show(
     let back_id = Id::unique(("popup-backdrop", shell.id));
     egui::Area::new(back_id).order(Order::Middle).fixed_pos(screen.min).interactable(true).show(ctx, |ui| {
         let (rect, resp) = ui.allocate_exact_size(screen.size(), Sense::click());
-        ui.painter().rect_filled(rect, CornerRadius::ZERO, alpha(Color32::BLACK, DIM * vis));
+        ui.painter().rect_filled(rect, CornerRadius::ZERO, alpha(Color32::BLACK, DIM * vis * (1.0 - 0.45 * t::light_amount())));
         if resp.clicked() && !shell.is_closing() {
             event = Event::Cancel;
         }
@@ -81,15 +81,15 @@ pub fn show(
             ui.disable();
         }
         egui::Frame::new()
-            .fill(t::SURFACE)
+            .fill(t::SURFACE())
             .corner_radius(CornerRadius::same(24))
-            .stroke(Stroke::new(1.0, t::LINE))
-            .shadow(Shadow { offset: [0, 16], blur: 48, spread: 0, color: alpha(Color32::BLACK, 0.55) })
+            .stroke(Stroke::new(1.0, t::LINE()))
+            .shadow(Shadow { offset: [0, 16], blur: 48, spread: 0, color: t::shade(0.55) })
             .inner_margin(egui::Margin::same(24))
             .show(ui, |ui| {
                 ui.set_width(width);
                 ui.spacing_mut().item_spacing = vec2(8.0, 8.0);
-                widgets::label(ui, title, t::semi(19.0), t::TEXT);
+                widgets::label(ui, title, t::semi(19.0), t::TEXT());
                 ui.add_space(10.0);
                 body(ui);
                 ui.add_space(14.0);

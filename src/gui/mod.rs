@@ -14,6 +14,22 @@ use std::sync::Arc;
 pub const LOGO_PNG: &[u8] = include_bytes!("../../assets/logo.png");
 pub const ICON_PNG: &[u8] = include_bytes!("../../assets/logo_96.png");
 
+/// Follow the chosen appearance ("dark", "light" or "system"), cross-fading on changes.
+pub fn update_appearance(ctx: &egui::Context, choice: &str) {
+    let light = match choice {
+        "light" => true,
+        "system" => ctx.system_theme() == Some(egui::Theme::Light),
+        _ => false,
+    };
+    let f = anim::tween(ctx, egui::Id::unique("appearance"), if light { 1.0 } else { 0.0 }, 0.45);
+    let applied = ctx.data(|d| d.get_temp::<f32>(egui::Id::unique("appearance-applied")));
+    if applied.map(|a| (a - f).abs() > 1e-4).unwrap_or(true) {
+        theme::set_light_amount(f);
+        theme::apply_style(ctx);
+        ctx.data_mut(|d| d.insert_temp(egui::Id::unique("appearance-applied"), f));
+    }
+}
+
 pub fn setup_context(ctx: &egui::Context) {
     theme::install_fonts(ctx);
     theme::apply_style(ctx);

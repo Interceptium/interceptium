@@ -14,7 +14,14 @@ pub fn local_appdata() -> PathBuf {
 
 /// The per-user data folder (created if missing).
 pub fn data_dir() -> PathBuf {
-    let base = if let Some(o) = std::env::var_os("INTERCEPTIUM_HOME") {
+    let base = data_dir_path();
+    let _ = std::fs::create_dir_all(&base);
+    base
+}
+
+/// Where the per-user data folder is, without creating it.
+pub fn data_dir_path() -> PathBuf {
+    if let Some(o) = std::env::var_os("INTERCEPTIUM_HOME") {
         PathBuf::from(o)
     } else if cfg!(windows) {
         local_appdata().join("Interceptium")
@@ -25,9 +32,7 @@ pub fn data_dir() -> PathBuf {
             .map(PathBuf::from)
             .unwrap_or_else(|| home().join(".local").join("share"))
             .join("interceptium")
-    };
-    let _ = std::fs::create_dir_all(&base);
-    base
+    }
 }
 
 pub fn ca_dir() -> PathBuf {

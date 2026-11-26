@@ -89,12 +89,21 @@ pub struct Settings {
     pub clear_cache_on_launch: bool,
     pub auto_capture_launches: bool,
     pub enabled_configs: Vec<String>,
+    /// "dark", "light" or "system"
+    pub theme: String,
 }
+
+pub const THEMES: [&str; 3] = ["dark", "light", "system"];
 
 impl Default for Settings {
     fn default() -> Self {
-        Settings { port: DEFAULT_PORT, clear_cache_on_launch: true, auto_capture_launches: true, enabled_configs: vec![] }
+        Settings { port: DEFAULT_PORT, clear_cache_on_launch: true, auto_capture_launches: true, enabled_configs: vec![], theme: "dark".into() }
     }
+}
+
+/// The saved appearance, read without creating any files (used by the setup window).
+pub fn saved_theme(root: &Path) -> String {
+    load_settings(&root.join("settings.json")).theme
 }
 
 type CacheKey = Vec<(String, Option<(SystemTime, u64)>)>;
@@ -158,6 +167,7 @@ impl ConfigStore {
                 "clear_cache_on_launch": s.clear_cache_on_launch,
                 "auto_capture_launches": s.auto_capture_launches,
                 "enabled_configs": s.enabled_configs,
+                "theme": s.theme,
             }),
         );
     }
@@ -359,6 +369,12 @@ fn load_settings(path: &Path) -> Settings {
             .and_then(Value::as_array)
             .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
             .unwrap_or_default(),
+        theme: raw
+            .get("theme")
+            .and_then(Value::as_str)
+            .filter(|t| THEMES.contains(t))
+            .unwrap_or("dark")
+            .to_string(),
     }
 }
 
@@ -396,8 +412,13 @@ mod tests {
         assert!(store.is_enabled("Sky 2"));
         store.delete("Sky 2");
         assert!(!store.is_enabled("Sky 2"));
+        store.update_settings(|s| s.theme = "light".into());
         let again = ConfigStore::open(root.clone());
         assert_eq!(again.settings().enabled_configs, vec!["Default"]);
+        assert_eq!(again.settings().theme, "light");
+        assert_eq!(saved_theme(&root), "light");
+        std::fs::write(root.join("settings.json"), r#"{"theme": "purple"}"#).unwrap();
+        assert_eq!(saved_theme(&root), "dark", "unknown values fall back to dark");
         let _ = std::fs::remove_dir_all(root);
     }
 

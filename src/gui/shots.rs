@@ -36,6 +36,7 @@ pub fn drive(app: &mut MainApp, ctx: &egui::Context) {
                 "rule" => app.shot_rule_editor(ctx),
                 "log" => app.shot_log(),
                 "run" => app.shot_start(ctx),
+                "light" => app.shot_light(),
                 _ => {}
             }
         }
