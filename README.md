@@ -142,17 +142,13 @@ scripts/build-macos.sh         # macOS:   dist/Interceptium
 
 Replace `assets/logo.png` (256×256), `assets/logo_96.png` (window icon) and `assets/logo.ico` (Windows exe icon).
 
-## Code signing policy
+## Code signing
 
-Free code signing provided by [SignPath.io](https://about.signpath.io), certificate by [SignPath Foundation](https://signpath.org).
+Release files are not code-signed yet. Every release file is built by GitHub Actions from this repository's
+source code (`.github/workflows/release.yml`), and you can check your download against `SHA256SUMS.txt`.
+The workflow is ready to sign releases through SignPath once a certificate is available (see [SIGNING.md](SIGNING.md)).
 
-- **Committers and reviewers:** members of the [Interceptium](https://github.com/Interceptium) GitHub organization
-- **Approvers:** owners of the [Interceptium](https://github.com/Interceptium) GitHub organization
-
-Only files built by GitHub Actions from this repository's source code (`.github/workflows/release.yml`) are signed,
-and every signing request is approved by hand. See [SIGNING.md](SIGNING.md).
-
-### Privacy policy
+## Privacy policy
 
 This program will not transfer any information to other networked systems unless specifically requested by the user
 or the person installing or operating it. Interceptium is a local proxy: the only network traffic is Roblox's own

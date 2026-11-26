@@ -1,10 +1,11 @@
 # Code signing
 
-Release builds of `Interceptium-Setup-<version>.exe` are signed through
-[SignPath Foundation](https://signpath.org) once the project is approved. Until then the workflow builds
-unsigned files exactly as before; the signing steps switch on by themselves when the settings below exist.
+Releases are not signed at the moment. The workflow can sign `Interceptium-Setup-<version>.exe` through
+[SignPath](https://signpath.io) (the free SignPath Foundation program, which asks for a project with some public
+following, or a paid SignPath plan). Until the settings below exist, the signing steps are skipped and the
+workflow builds unsigned files.
 
-## One-time setup (after SignPath approves the project)
+## One-time setup (once a SignPath project exists)
 
 1. In SignPath, open the Interceptium project and set its **artifact configuration** to:
 
