@@ -18,6 +18,11 @@ on:
         description: "Optional: publish the exact files built (and scanned) by this earlier run ID instead of rebuilding"
         required: false
         default: ""
+      build_only:
+        description: "Only build, sign and test; don't touch the release"
+        type: boolean
+        required: false
+        default: false
 
 permissions:
   contents: read
@@ -222,7 +227,7 @@ jobs:
 
   release:
     if: >-
-      always() && github.event_name == 'workflow_dispatch' && inputs.version != '' &&
+      always() && github.event_name == 'workflow_dispatch' && inputs.version != '' && !inputs.build_only &&
       (inputs.reuse_run != '' || (needs.windows-setup.result == 'success' && needs.sources.result == 'success'))
     needs: [windows-setup, sources]
     runs-on: ubuntu-latest

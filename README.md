@@ -172,9 +172,10 @@ Replace `assets/logo.png` (256×256), `assets/logo_96.png` (window icon) and `as
 
 ## Code signing
 
-Every release file is built by GitHub Actions from this repository's source code (`.github/workflows/release.yml`),
-and you can check your download against `SHA256SUMS.txt`. The workflow can sign the Windows exe with the project's own
-certificate or through SignPath (see [SIGNING.md](SIGNING.md)).
+The Windows exe is signed by **Canopy Interactive** with the project's own (self-signed) certificate. Windows only
+trusts that certificate on PCs where it is installed, so elsewhere it still shows as an unknown publisher; the
+signature proves the file hasn't been changed since GitHub Actions built it from this repository's source code
+(`.github/workflows/release.yml`). You can also check your download against `SHA256SUMS.txt`. See [SIGNING.md](SIGNING.md).
 
 ## Privacy policy
 
