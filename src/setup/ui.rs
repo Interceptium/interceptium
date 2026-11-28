@@ -1,6 +1,6 @@
 //! The setup window.
 
-use super::core::{default_directory, Installer, Manifest, Options};
+use super::core::{compare_versions, default_directory, Installer, Manifest, Options};
 use super::{Action, SetupArgs};
 use crate::gui::anim::{self, tween_bool};
 use crate::gui::icons::{self, Icon};
@@ -16,6 +16,7 @@ enum Work {
     Repair,
     Reinstall,
     Uninstall,
+    Update,
 }
 
 impl Work {
@@ -25,6 +26,7 @@ impl Work {
             Work::Repair => "Repairing Interceptium",
             Work::Reinstall => "Reinstalling Interceptium",
             Work::Uninstall => "Uninstalling Interceptium",
+            Work::Update => "Updating Interceptium",
         }
     }
     fn done(self) -> &'static str {
@@ -33,6 +35,7 @@ impl Work {
             Work::Repair => "Interceptium is repaired",
             Work::Reinstall => "Interceptium is reinstalled",
             Work::Uninstall => "Interceptium is uninstalled",
+            Work::Update => "Interceptium is updated",
         }
     }
 }
@@ -45,6 +48,7 @@ enum View {
     Done(Work, PathBuf),
     Error(String),
     Uninstall,
+    Update,
 }
 
 pub struct SetupApp {
@@ -104,11 +108,24 @@ impl SetupApp {
             Some(Action::Repair | Action::Reinstall | Action::Uninstall) => app.show(&ctx, View::Error("Interceptium is not installed.".into())),
             Some(Action::Install) => app.show(&ctx, View::Install),
             _ => {
-                let v = if app.installed.is_some() { View::Maintenance } else { View::Install };
+                let v = app.home_view();
                 app.show(&ctx, v)
             }
         }
         app
+    }
+
+    /// Not installed: Install. An older version installed: Update. Otherwise: Repair / Reinstall / Uninstall.
+    fn home_view(&self) -> View {
+        match &self.installed {
+            None => View::Install,
+            Some(m) if compare_versions(&m.version, crate::VERSION) == std::cmp::Ordering::Less => View::Update,
+            Some(_) => View::Maintenance,
+        }
+    }
+
+    fn is_update(&self) -> bool {
+        matches!(self.view, View::Update | View::Progress(Work::Update) | View::Done(Work::Update, _))
     }
 
     fn show(&mut self, ctx: &egui::Context, view: View) {
@@ -141,7 +158,8 @@ impl SetupApp {
             };
             let r = match work {
                 Work::Install => installer.install(&options, &report).map(|m| PathBuf::from(m.directory)),
-                Work::Repair => installer.repair(&report).map(|m| PathBuf::from(m.directory)),
+                // An update installs this version over the old one, keeping its folder and shortcuts.
+                Work::Repair | Work::Update => installer.repair(&report).map(|m| PathBuf::from(m.directory)),
                 Work::Reinstall => installer.reinstall(&report).map(|m| PathBuf::from(m.directory)),
                 Work::Uninstall => match installed_dir {
                     Some(d) => installer.uninstall(&d, remove_data, &report).map(|_| d),
@@ -205,7 +223,8 @@ impl SetupApp {
             }
             if self.installed.is_some() {
                 if widgets::button(ui, "back", "Back", None, Kind::Ghost, 0.0, 44.0, true).clicked() {
-                    self.show(ctx, View::Maintenance);
+                    let v = self.home_view();
+                    self.show(ctx, v);
                 }
             } else if widgets::button(ui, "cancel", "Cancel", None, Kind::Ghost, 0.0, 44.0, true).clicked() {
                 ctx.send_viewport_cmd(egui::ViewportCommand::Close);
@@ -236,6 +255,14 @@ impl SetupApp {
         let w = ui.available_width();
         let (version, dir) = self.installed.as_ref().map(|m| (m.version.clone(), m.directory.clone())).unwrap_or_default();
         Self::title(ui, "Interceptium is installed", &format!("Version {version}  ·  {dir}"));
+        if compare_versions(&version, crate::VERSION) == std::cmp::Ordering::Greater {
+            ui.add_space(8.0);
+            ui.horizontal(|ui| {
+                let (r, _) = ui.allocate_exact_size(vec2(16.0, 16.0), Sense::hover());
+                icons::draw(ui.painter(), Icon::Warning, r.center(), 15.0, t::WARN());
+                widgets::label(ui, &format!("A newer version is installed. Repair or Reinstall puts back version {}.", crate::VERSION), t::regular(12.5), t::WARN());
+            });
+        }
         ui.add_space(20.0);
         ui.spacing_mut().item_spacing.y = 10.0;
         if Self::option_card(ui, "repair", Icon::Wrench, "Repair", "Restore missing or damaged files", t::ACCENT(), w) {
@@ -250,6 +277,44 @@ impl SetupApp {
         footer(ui, |ui| {
             if widgets::button(ui, "close", "Close", None, Kind::Ghost, 0.0, 44.0, true).clicked() {
                 ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            }
+        });
+    }
+
+    fn view_update(&mut self, ui: &mut Ui, ctx: &egui::Context) {
+        let w = ui.available_width();
+        let (old, dir) = self.installed.as_ref().map(|m| (m.version.clone(), m.directory.clone())).unwrap_or_default();
+        Self::title(ui, "Update Interceptium", &format!("Version {old}  \u{2192}  {}", crate::VERSION));
+        ui.add_space(22.0);
+        widgets::card().inner_margin(egui::Margin::symmetric(18, 6)).show(ui, |ui| {
+            ui.set_width(w - 36.0);
+            ui.spacing_mut().item_spacing.y = 0.0;
+            for (i, (icon, title, detail)) in [
+                (Icon::Folder, "Location", dir.as_str()),
+                (Icon::Shield, "Configs and settings", "Kept as they are"),
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                if i > 0 {
+                    let (r, _) = ui.allocate_exact_size(vec2(w - 36.0, 1.0), Sense::hover());
+                    ui.painter().rect_filled(r, CornerRadius::ZERO, alpha(t::LINE(), 0.7));
+                }
+                let (r, _) = ui.allocate_exact_size(vec2(w - 36.0, 54.0), Sense::hover());
+                let c = pos2(r.left() + 16.0, r.center().y);
+                ui.painter().circle_filled(c, 15.0, alpha(t::ACCENT(), 0.12));
+                icons::draw(ui.painter(), icon, c, 15.0, t::ACCENT());
+                ui.painter().text(pos2(r.left() + 44.0, r.center().y - 9.0), Align2::LEFT_CENTER, title, t::semi(14.0), t::TEXT());
+                let d = widgets::elide(ui, detail, &t::regular(12.5), r.width() - 60.0);
+                ui.painter().text(pos2(r.left() + 44.0, r.center().y + 10.0), Align2::LEFT_CENTER, d, t::regular(12.5), t::MUTED());
+            }
+        });
+        footer(ui, |ui| {
+            if widgets::button(ui, "update", "Update", Some(Icon::Refresh), Kind::Primary, 150.0, 44.0, true).clicked() {
+                self.start(ctx, Work::Update);
+            }
+            if widgets::button(ui, "more", "More options", None, Kind::Ghost, 0.0, 44.0, true).clicked() {
+                self.show(ctx, View::Maintenance);
             }
         });
     }
@@ -349,7 +414,7 @@ impl SetupApp {
             if self.installed.is_some() || self.result.is_some() {
                 if widgets::button(ui, "back", "Back", None, Kind::Ghost, 0.0, 44.0, true).clicked() {
                     self.installed = self.installer.installed();
-                    let v = if self.installed.is_some() { View::Maintenance } else { View::Install };
+                    let v = self.home_view();
                     self.show(ctx, v);
                 }
             }
@@ -396,7 +461,7 @@ impl eframe::App for SetupApp {
         // header
         let head = Rect::from_min_size(rect.min + vec2(28.0, 22.0), vec2(rect.width() - 56.0, 36.0));
         ui.painter().image(self.logo.id(), Rect::from_center_size(pos2(head.left() + 17.0, head.center().y), vec2(34.0, 34.0)), Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
-        ui.painter().text(pos2(head.left() + 44.0, head.center().y), Align2::LEFT_CENTER, "Interceptium Setup", t::semi(16.0), t::TEXT());
+        ui.painter().text(pos2(head.left() + 44.0, head.center().y), Align2::LEFT_CENTER, if self.is_update() { "Interceptium Update" } else { "Interceptium Setup" }, t::semi(16.0), t::TEXT());
         ui.painter().text(pos2(head.right() - 84.0, head.center().y), Align2::RIGHT_CENTER, format!("Version {}", crate::VERSION), t::regular(12.5), t::FAINT());
         let buttons = Rect::from_min_max(pos2(head.right() - 76.0, head.top()), pos2(head.right() + 6.0, head.bottom()));
         let mut wc = ui.new_child(UiBuilder::new().max_rect(buttons).layout(egui::Layout::right_to_left(egui::Align::Center)));
@@ -412,6 +477,7 @@ impl eframe::App for SetupApp {
         match self.view.clone() {
             View::Install => self.view_install(&mut c, &ctx),
             View::Maintenance => self.view_maintenance(&mut c, &ctx),
+            View::Update => self.view_update(&mut c, &ctx),
             View::Uninstall => self.view_uninstall(&mut c, &ctx),
             View::Progress(w) => self.view_progress(&mut c, w),
             View::Done(w, d) => self.view_done(&mut c, &ctx, w, d),
@@ -435,6 +501,10 @@ impl eframe::App for SetupApp {
                         View::Progress(Work::Install)
                     }
                     "done" => View::Done(Work::Install, PathBuf::from(self.dir_text.clone())),
+                    "update" => {
+                        self.installed = Some(super::core::Manifest { version: "1.0.0".into(), directory: self.dir_text.clone(), files: vec![], shortcuts: vec![], desktop_shortcut: true, start_menu_shortcut: true });
+                        View::Update
+                    }
                     "error" => View::Error("Can't write to C:\\Program Files\\Interceptium. Choose another folder.".into()),
                     "uninstall" => View::Uninstall,
                     _ => View::Install,

@@ -5,6 +5,7 @@
 - **CDN mode** (Settings > Roblox, off by default). CDN rules from Fleasion configs can download replacement files from web addresses. Interceptium asks before turning it on and makes the downloads itself: HTTPS with certificate checks only, never to this PC or your local network, no cookies, limited time and size. Roblox never connects to those addresses.
 - **CDN** action in the rule editor.
 - **Import** is now a labelled button, and `.json` configs can be dragged onto the window.
+- **Update screen:** with an older version installed, the setup opens as *Interceptium Update* (for example 1.0.0 → 1.0.1) and keeps your folder, shortcuts and configs.
 
 ### Fixed
 - Saving or importing a config could fail with "file exists" on some Windows setups.

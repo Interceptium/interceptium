@@ -143,6 +143,21 @@ fn same_file(a: &Path, b: &Path) -> bool {
     }
 }
 
+/// Compare dotted version numbers ("1.0.10" > "1.0.9"); missing parts count as 0.
+pub fn compare_versions(a: &str, b: &str) -> std::cmp::Ordering {
+    let parse = |v: &str| -> Vec<u64> {
+        v.trim().trim_start_matches(['v', 'V']).split(['.', '-', '+']).map(|p| p.parse::<u64>().unwrap_or(0)).collect()
+    };
+    let (x, y) = (parse(a), parse(b));
+    for i in 0..x.len().max(y.len()) {
+        let o = x.get(i).copied().unwrap_or(0).cmp(&y.get(i).copied().unwrap_or(0));
+        if o != std::cmp::Ordering::Equal {
+            return o;
+        }
+    }
+    std::cmp::Ordering::Equal
+}
+
 pub fn default_directory() -> PathBuf {
     crate::paths::local_appdata().join("Programs").join(APP_NAME)
 }
@@ -550,6 +565,16 @@ pub mod tests {
         inst.uninstall(&o.directory, false, &|_, _| {}).unwrap();
         assert!(root.join("victim.txt").exists());
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn versions() {
+        use std::cmp::Ordering::*;
+        assert_eq!(compare_versions("1.0.0", "1.0.1"), Less);
+        assert_eq!(compare_versions("1.0.10", "1.0.9"), Greater);
+        assert_eq!(compare_versions("v1.0.1", "1.0.1"), Equal);
+        assert_eq!(compare_versions("1.0", "1.0.0"), Equal);
+        assert_eq!(compare_versions("", "1.0.0"), Less);
     }
 
     #[test]
