@@ -79,8 +79,23 @@ pub fn safe_config_name(name: &str) -> Result<String, String> {
 pub fn atomic_write_json(path: &Path, data: &Value) -> std::io::Result<()> {
     let tmp = path.with_file_name(format!("{}.tmp", path.file_name().unwrap_or_default().to_string_lossy()));
     let text = serde_json::to_string_pretty(data).unwrap_or_else(|_| "{}".into());
-    std::fs::write(&tmp, text)?;
-    std::fs::rename(&tmp, path)
+    std::fs::write(&tmp, &text)?;
+    match std::fs::rename(&tmp, path) {
+        Ok(()) => Ok(()),
+        // Some Windows setups (synced or redirected folders, some antivirus) refuse to replace an
+        // existing file by renaming ("file exists"). Remove the old file and try again; as a last
+        // resort write the file in place.
+        Err(_) if path.exists() => {
+            let _ = std::fs::remove_file(path);
+            let result = std::fs::rename(&tmp, path).or_else(|_| std::fs::write(path, &text));
+            let _ = std::fs::remove_file(&tmp);
+            result
+        }
+        Err(e) => {
+            let _ = std::fs::remove_file(&tmp);
+            Err(e)
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -91,13 +106,15 @@ pub struct Settings {
     pub enabled_configs: Vec<String>,
     /// "dark", "light" or "system"
     pub theme: String,
+    /// CDN rules may download replacements from web addresses (off unless turned on).
+    pub cdn_mode: bool,
 }
 
 pub const THEMES: [&str; 3] = ["dark", "light", "system"];
 
 impl Default for Settings {
     fn default() -> Self {
-        Settings { port: DEFAULT_PORT, clear_cache_on_launch: true, auto_capture_launches: true, enabled_configs: vec![], theme: "dark".into() }
+        Settings { port: DEFAULT_PORT, clear_cache_on_launch: true, auto_capture_launches: true, enabled_configs: vec![], theme: "dark".into(), cdn_mode: false }
     }
 }
 
@@ -168,6 +185,7 @@ impl ConfigStore {
                 "auto_capture_launches": s.auto_capture_launches,
                 "enabled_configs": s.enabled_configs,
                 "theme": s.theme,
+                "cdn_mode": s.cdn_mode,
             }),
         );
     }
@@ -341,7 +359,8 @@ impl ConfigStore {
                 all.extend(iter_rules(arr));
             }
         }
-        let compiled = Arc::new(compile_rules(&all, &|p: &str| self.resolve_local(p)));
+        let allow_cdn = self.lock().settings.cdn_mode;
+        let compiled = Arc::new(compile_rules(&all, &|p: &str| self.resolve_local(p), allow_cdn));
         let mut inner = self.lock();
         inner.cache = compiled.clone();
         inner.cache_key = Some(key);
@@ -375,6 +394,8 @@ fn load_settings(path: &Path) -> Settings {
             .filter(|t| THEMES.contains(t))
             .unwrap_or("dark")
             .to_string(),
+        // only an explicit `true` turns it on
+        cdn_mode: raw.get("cdn_mode").and_then(Value::as_bool).unwrap_or(false),
     }
 }
 
@@ -451,6 +472,23 @@ mod tests {
         std::fs::write(store.folder.join("Pack").join("a.png"), b"x").unwrap();
         assert_eq!(store.resolve_local("/Pack/a.png"), store.folder.join("Pack").join("a.png").to_string_lossy());
         assert_eq!(store.resolve_local("/../a.png"), "/../a.png");
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn saving_over_existing_files_and_leftovers() {
+        let root = temp();
+        let store = ConfigStore::open(root.clone());
+        let src = root.join("pack.json");
+        std::fs::write(&src, r#"{"replacement_rules": []}"#).unwrap();
+        // a leftover temp file from an interrupted save must not break anything
+        std::fs::write(store.folder.join("pack.json.tmp"), b"junk").unwrap();
+        for expected in ["pack", "pack (2)", "pack (3)"] {
+            assert_eq!(store.import_file(&src).unwrap(), expected);
+        }
+        store.save_config("pack", &json!({"replacement_rules": [{"replace_ids": ["9000"], "mode": "remove"}]})).unwrap();
+        assert_eq!(store.load_config("pack")["replacement_rules"][0]["replace_ids"][0], json!("9000"));
+        assert!(!store.folder.join("pack.json.tmp").exists());
         let _ = std::fs::remove_dir_all(root);
     }
 

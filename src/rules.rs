@@ -142,6 +142,8 @@ pub enum Action {
     Replace(i64),
     Remove,
     File(String),
+    /// Download from this HTTPS address (CDN mode, off unless turned on in Settings).
+    Cdn(String),
 }
 
 #[derive(Clone, Debug, Default)]
@@ -174,8 +176,34 @@ fn text_of(v: Option<&Value>) -> String {
     }
 }
 
+/// A CDN address Interceptium is willing to download from: `https://host[:port]/path`, with no
+/// login details, spaces or control characters. Returns it trimmed, or None.
+pub fn safe_cdn_url(raw: &str) -> Option<String> {
+    let url = raw.trim();
+    if url.len() > 2048 || url.chars().any(|c| c.is_whitespace() || c.is_control()) {
+        return None;
+    }
+    let rest = url.get(..8).filter(|p| p.eq_ignore_ascii_case("https://")).map(|_| &url[8..])?;
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or("");
+    if authority.is_empty() || authority.contains('@') {
+        return None;
+    }
+    let host = authority.rsplit_once(':').map(|(h, p)| if p.chars().all(|c| c.is_ascii_digit()) && !p.is_empty() { h } else { authority }).unwrap_or(authority);
+    if host.is_empty() || !host.chars().all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-' || c == '[' || c == ']' || c == ':') {
+        return None;
+    }
+    Some(url.to_string())
+}
+
+/// The host part of a CDN address, for display.
+pub fn cdn_host(url: &str) -> String {
+    let rest = url.trim().get(8..).unwrap_or("");
+    rest.split(['/', '?', '#']).next().unwrap_or("").to_string()
+}
+
 /// Turn enabled rules into a fast lookup. Later rules win, like Fleasion.
-pub fn compile_rules(rules: &[&Map<String, Value>], resolve_local: &dyn Fn(&str) -> String) -> RuleSet {
+/// CDN rules are only used when `allow_cdn` is true (the setting is off by default).
+pub fn compile_rules(rules: &[&Map<String, Value>], resolve_local: &dyn Fn(&str) -> String, allow_cdn: bool) -> RuleSet {
     let mut out = RuleSet::default();
     for rule in rules {
         if !rule.get("enabled").map(truthy).unwrap_or(true) {
@@ -193,11 +221,19 @@ pub fn compile_rules(rules: &[&Map<String, Value>], resolve_local: &dyn Fn(&str)
                 if path.is_empty() { Action::Remove } else { Action::File(resolve_local(&path)) }
             }
             "cdn" => {
-                if !text_of(rule.get("cdn_url")).is_empty() {
-                    out.skipped_cdn += 1;
-                    continue; // never send Roblox to third-party servers
+                let url = text_of(rule.get("cdn_url"));
+                if url.is_empty() {
+                    Action::Remove
+                } else {
+                    match safe_cdn_url(&url) {
+                        // Roblox itself never contacts the CDN: Interceptium downloads the file.
+                        Some(u) if allow_cdn => Action::Cdn(u),
+                        _ => {
+                            out.skipped_cdn += 1;
+                            continue;
+                        }
+                    }
                 }
-                Action::Remove
             }
             _ => match rule.get("with_id") {
                 None | Some(Value::Null) => Action::Remove,
@@ -273,7 +309,7 @@ pub fn describe(rule: &Map<String, Value>) -> String {
             let p = text_of(rule.get("local_path")).replace('\\', "/");
             p.rsplit('/').next().unwrap_or("").to_string()
         }
-        "cdn" => "Not supported".into(),
+        "cdn" => cdn_host(&text_of(rule.get("cdn_url"))),
         _ => String::new(),
     }
 }
@@ -295,7 +331,7 @@ mod tests {
     fn compile(v: Value) -> RuleSet {
         let arr = v["replacement_rules"].as_array().unwrap().clone();
         let rules = iter_rules(&arr);
-        compile_rules(&rules, &|p: &str| format!("R:{p}"))
+        compile_rules(&rules, &|p: &str| format!("R:{p}"), false)
     }
 
     #[test]
@@ -323,6 +359,35 @@ mod tests {
         assert_eq!(rs.by_id[&8000], Action::Remove);
         assert!(!rs.by_id.contains_key(&9000));
         assert_eq!(rs.lookup(Some(1), Some(1)), Some(&Action::File("R:/F/x.png".into())));
+    }
+
+    #[test]
+    fn cdn_rules_only_when_allowed() {
+        let cfg = json!({"replacement_rules": [
+            {"replace_ids": ["4000"], "mode": "cdn", "cdn_url": "https://cdn.example.com/a.png"},
+            {"replace_ids": ["4001"], "mode": "cdn", "cdn_url": "http://cdn.example.com/a.png"},
+            {"replace_ids": ["4002"], "mode": "cdn", "cdn_url": "https://user:pw@cdn.example.com/a.png"},
+            {"replace_ids": ["4003"], "mode": "cdn", "cdn_url": "file:///etc/passwd"}
+        ]});
+        let arr = cfg["replacement_rules"].as_array().unwrap().clone();
+        let rules = iter_rules(&arr);
+        let off = compile_rules(&rules, &|p: &str| p.to_string(), false);
+        assert!(off.is_empty());
+        assert_eq!(off.skipped_cdn, 4);
+        let on = compile_rules(&rules, &|p: &str| p.to_string(), true);
+        assert_eq!(on.by_id[&4000], Action::Cdn("https://cdn.example.com/a.png".into()));
+        assert_eq!(on.by_id.len(), 1, "only https without login details is used");
+        assert_eq!(on.skipped_cdn, 3);
+    }
+
+    #[test]
+    fn cdn_urls() {
+        assert!(safe_cdn_url(" https://a.b/c?d=1 ").is_some());
+        assert!(safe_cdn_url("HTTPS://a.b:8443/x").is_some());
+        for bad in ["http://a.b/x", "https://", "https:///x", "https://a b/x", "https://u@a.b/", "ftp://a.b", "https://a.b/\nx"] {
+            assert!(safe_cdn_url(bad).is_none(), "{bad:?}");
+        }
+        assert_eq!(cdn_host("https://cdn.example.com/a.png"), "cdn.example.com");
     }
 
     #[test]

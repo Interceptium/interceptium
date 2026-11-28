@@ -26,6 +26,10 @@ pub enum Icon {
     Box,
     Shield,
     File,
+    Minimize,
+    Maximize,
+    Restore,
+    Warning,
 }
 
 fn polyline(p: &Painter, pts: Vec<Pos2>, stroke: Stroke) {
@@ -130,6 +134,24 @@ pub fn draw(p: &Painter, icon: Icon, c: Pos2, s: f32, color: Color32) {
             let shape = CubicBezierShape::from_points_stroke([at(0.0, 0.85), at(0.75, 0.45), at(0.7, -0.2), at(0.7, -0.55)], false, Color32::TRANSPARENT, st);
             p.add(shape);
             polyline(p, vec![at(-0.7, -0.55), at(0.0, -0.85), at(0.7, -0.55)], st);
+        }
+        Icon::Minimize => {
+            p.line_segment([at(-0.55, 0.0), at(0.55, 0.0)], st);
+        }
+        Icon::Maximize => {
+            let r = egui::Rect::from_center_size(c, egui::vec2(h * 1.1, h * 1.1));
+            p.rect_stroke(r, egui::CornerRadius::same((h * 0.22) as u8), st, egui::StrokeKind::Middle);
+        }
+        Icon::Restore => {
+            let back = egui::Rect::from_center_size(at(0.14, -0.14), egui::vec2(h * 0.9, h * 0.9));
+            polyline(p, vec![back.left_top() + vec2(0.0, h * 0.22), back.left_top(), back.right_top(), back.right_bottom(), back.right_bottom() - vec2(h * 0.22, 0.0)], st);
+            let front = egui::Rect::from_center_size(at(-0.12, 0.12), egui::vec2(h * 0.9, h * 0.9));
+            p.rect_stroke(front, egui::CornerRadius::same((h * 0.18) as u8), st, egui::StrokeKind::Middle);
+        }
+        Icon::Warning => {
+            polyline(p, vec![at(0.0, -0.8), at(0.82, 0.68), at(-0.82, 0.68), at(0.0, -0.8)], st);
+            p.line_segment([at(0.0, -0.25), at(0.0, 0.2)], st);
+            p.circle_filled(at(0.0, 0.45), w * 0.7, color);
         }
         Icon::File => {
             polyline(p, vec![at(-0.55, -0.8), at(0.2, -0.8), at(0.6, -0.4), at(0.6, 0.8), at(-0.55, 0.8), at(-0.55, -0.8)], st);

@@ -64,18 +64,42 @@ pub fn file_name(path: &str) -> String {
     path.replace('\\', "/").rsplit('/').next().unwrap_or("").to_string()
 }
 
+/// Where a replacement's bytes come from.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Source {
+    File(String),
+    /// Downloaded by Interceptium (CDN mode); Roblox never contacts this address.
+    Url(String),
+}
+
+impl Source {
+    fn from_action(a: &Action) -> Option<Source> {
+        match a {
+            Action::File(p) => Some(Source::File(p.clone())),
+            Action::Cdn(u) => Some(Source::Url(u.clone())),
+            _ => None,
+        }
+    }
+    pub fn label(&self) -> String {
+        match self {
+            Source::File(p) => file_name(p),
+            Source::Url(u) => crate::rules::cdn_host(u),
+        }
+    }
+}
+
 #[derive(Debug, PartialEq, Eq)]
 pub enum Single {
     Pass,
     Remove,
-    File(String),
+    Serve(Source),
     Replace(String),
 }
 
 #[derive(Default)]
 struct State {
-    pending: HashMap<String, (String, Instant)>,
-    routes: HashMap<String, (String, Instant)>,
+    pending: HashMap<String, (Source, Instant)>,
+    routes: HashMap<String, (Source, Instant)>,
 }
 
 #[derive(Default)]
@@ -114,11 +138,13 @@ impl AssetRouter {
                     changed = true;
                     continue;
                 }
-                Action::File(path) => {
+                Action::File(_) | Action::Cdn(_) => {
+                    let source = Source::from_action(&hit).expect("file or cdn");
                     let req = id_text(obj.get("requestId"));
                     if !req.is_empty() {
-                        crate::log!("File", "asset {shown} will be served from {}", file_name(&path));
-                        self.lock().pending.insert(req, (path, now));
+                        let topic = if matches!(source, Source::Url(_)) { "CDN" } else { "File" };
+                        crate::log!(topic, "asset {shown} will be served from {}", source.label());
+                        self.lock().pending.insert(req, (source, now));
                     }
                 }
                 Action::Replace(to) => {
@@ -151,7 +177,7 @@ impl AssetRouter {
         let mut st = self.lock();
         for entry in &entries {
             let Some(obj) = entry.as_object() else { continue };
-            let Some((file, _)) = st.pending.remove(&id_text(obj.get("requestId"))) else { continue };
+            let Some((source, _)) = st.pending.remove(&id_text(obj.get("requestId"))) else { continue };
             let mut urls: Vec<&str> = Vec::new();
             if let Some(u) = obj.get("location").and_then(Value::as_str) {
                 urls.push(u);
@@ -160,15 +186,15 @@ impl AssetRouter {
                 urls.extend(list.iter().filter_map(|l| l.get("location").and_then(Value::as_str)));
             }
             for u in urls {
-                st.routes.insert(strip_query(u), (file.clone(), now));
+                st.routes.insert(strip_query(u), (source.clone(), now));
             }
         }
         st.pending.retain(|_, v| now.duration_since(v.1) < ROUTE_TTL);
         st.routes.retain(|_, v| now.duration_since(v.1) < ROUTE_TTL);
     }
 
-    /// Step 3: the local file for a CDN download, if one was routed.
-    pub fn cdn_file_for(&self, host: &str, path: &str) -> Option<String> {
+    /// Step 3: the replacement for a download from Roblox's CDN, if one was routed.
+    pub fn cdn_file_for(&self, host: &str, path: &str) -> Option<Source> {
         let key = strip_query(&format!("https://{host}{path}"));
         self.lock().routes.get(&key).map(|v| v.0.clone())
     }
@@ -202,9 +228,11 @@ impl AssetRouter {
                     crate::log!("Remove", "asset {asset} removed");
                     return Single::Remove;
                 }
-                Action::File(p) => {
-                    crate::log!("File", "asset {asset} served from {}", file_name(p));
-                    return Single::File(p.clone());
+                Action::File(_) | Action::Cdn(_) => {
+                    let source = Source::from_action(hit).expect("file or cdn");
+                    let topic = if matches!(source, Source::Url(_)) { "CDN" } else { "File" };
+                    crate::log!(topic, "asset {asset} served from {}", source.label());
+                    return Single::Serve(source);
                 }
                 Action::Replace(to) => {
                     crate::log!("Replace", "asset {asset} -> {to}");
@@ -257,7 +285,7 @@ mod tests {
         router.learn_batch_response(
             json!([{"requestId": "c", "location": "https://FTS.rbxcdn.com/abc?sig=1"}]).to_string().as_bytes(),
         );
-        assert_eq!(router.cdn_file_for("fts.rbxcdn.com", "/abc?other").as_deref(), Some("/tmp/x.png"));
+        assert_eq!(router.cdn_file_for("fts.rbxcdn.com", "/abc?other"), Some(Source::File("/tmp/x.png".into())));
         assert_eq!(router.cdn_file_for("fts.rbxcdn.com", "/zzz"), None);
     }
 
@@ -273,7 +301,7 @@ mod tests {
         let r = rules();
         assert_eq!(AssetRouter::rewrite_single("/v1/asset/?id=1000&x=1", &r), Single::Replace("/v1/asset/?id=2000&x=1".into()));
         assert_eq!(AssetRouter::rewrite_single("/v1/asset?ID=3000", &r), Single::Remove);
-        assert_eq!(AssetRouter::rewrite_single("/v1/asset?id=4000", &r), Single::File("/tmp/x.png".into()));
+        assert_eq!(AssetRouter::rewrite_single("/v1/asset?id=4000", &r), Single::Serve(Source::File("/tmp/x.png".into())));
         assert_eq!(AssetRouter::rewrite_single("/v1/asset?id=7", &r), Single::Pass);
         assert_eq!(AssetRouter::rewrite_single("/v2/other?id=1000", &r), Single::Pass);
     }

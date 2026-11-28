@@ -1,33 +1,27 @@
-**Interceptium** 1.0.0: a local, loopback-only proxy that swaps Roblox assets on your own computer. Rewritten in Rust.
+**Interceptium 1.0.1**
 
-### What it does
-- Replace an asset with another asset ID, remove it, or serve it from a local file
-- Multiple configs: switch each one on or off, and they combine
-- Imports Fleasion JSON configs (groups, asset-type names like `Image`, portable `/Folder/file` paths)
-- Rounded dark interface with Apple's system font on a Mac (Inter elsewhere), soft shadows, vector icons and smooth animations at your display's refresh rate
-- Dark and light mode, or follow the system setting
-- Launch Roblox through the proxy, or automatically reroute Roblox started from the website
-- Clear the Roblox asset cache, and remove the certificate from Roblox again
+### New
+- **Own title bar** with rounded window buttons (minimize, maximize, close). Drag it to move the window, double-click to maximize, resize from any edge. Rounded window corners on Windows 11 and macOS.
+- **CDN mode** (Settings > Roblox, off by default). CDN rules from Fleasion configs can download replacement files from web addresses. Interceptium asks before turning it on and makes the downloads itself: HTTPS with certificate checks only, never to this PC or your local network, no cookies, limited time and size. Roblox never connects to those addresses.
+- **CDN** action in the rule editor.
+- **Import** is now a labelled button, and `.json` configs can be dragged onto the window.
 
-### Safety
-- Written in Rust: one self-contained program, with widely used open-source crates only (rustls, ring, rcgen, tokio, serde, egui)
-- Listens on 127.0.0.1 only. No accounts, cookies, tokens, telemetry, update checks or other servers.
-- Decrypts only Roblox asset hosts. Everything else is passed through untouched.
-- Its local certificate authority is name-constrained to `roblox.com` / `rbxcdn.com`, and it is never added to the system trust store.
+### Fixed
+- Saving or importing a config could fail with "file exists" on some Windows setups.
 
-### Windows setup
-- The setup file is the app itself: nothing is unpacked and no other program is started
-- Per-user, no admin prompt, Start menu and Desktop shortcuts
-- Listed in Windows Settings > Apps and Control Panel, with Uninstall and Modify
-- Repair, Reinstall and Uninstall, also from Interceptium's Settings > Installation
+### Also in 1.0
+- Replace, remove or serve local files for Roblox assets, several configs at once, Fleasion config import
+- Dark, light or system appearance, smooth animations, Activity panel
+- Windows setup that installs, repairs, reinstalls and uninstalls itself; signed by Canopy Interactive (self-signed)
+- Local only: listens on 127.0.0.1, decrypts only Roblox asset hosts, name-constrained local certificate
 
 ### Downloads
 | File | |
 |---|---|
-| `Interceptium-Setup-1.0.0.exe` | Windows: the app, which installs itself |
-| `Interceptium-1.0.0-source-windows.zip` | Source + Windows build script |
-| `Interceptium-1.0.0-source-linux.zip` | Source + Linux build script |
-| `Interceptium-1.0.0-source-macos.zip` | Source + macOS build script |
-| `Interceptium-Setup-1.0.0-source.zip` | Source + setup build script |
+| `Interceptium-Setup-1.0.1.exe` | Windows: the app, which installs itself |
+| `Interceptium-1.0.1-source-windows.zip` | Source + Windows build script |
+| `Interceptium-1.0.1-source-linux.zip` | Source + Linux build script |
+| `Interceptium-1.0.1-source-macos.zip` | Source + macOS build script |
+| `Interceptium-Setup-1.0.1-source.zip` | Source + setup build script |
 
 Check your download against `SHA256SUMS.txt`.

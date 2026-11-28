@@ -35,7 +35,7 @@ Interceptium was designed to do one job and nothing else:
 |---|---|
 | **Local only** | The proxy listens on `127.0.0.1`. Other devices on your network can't reach it. |
 | **No accounts, cookies or tokens** | It never reads your Roblox login, browser cookies or any credentials. |
-| **No other servers** | No telemetry, no update checks, no downloads. The only traffic is Roblox's own traffic. |
+| **No other servers** | No telemetry, no update checks, no downloads. The only traffic is Roblox's own traffic, unless you turn on CDN mode (below). |
 | **Decrypts only Roblox asset hosts** | Only `assetdelivery.roblox.com`, `fts.rbxcdn.com` and `contentdelivery.roblox.com` are inspected. Every other connection is passed through as an encrypted tunnel it can't read. |
 | **Name-constrained certificate** | The local certificate authority is created on your PC and carries an X.509 *Name Constraints* extension. It only works for `roblox.com` and `rbxcdn.com`. Even if someone stole it, it couldn't fake your bank, email or any other site. A test in `src/e2e_tests.rs` proves this. |
 | **Not in your system trust store** | The certificate is only added to Roblox's own `ssl/cacert.pem`, never to Windows/macOS trust. |
@@ -50,11 +50,11 @@ Get it from the [Releases](../../releases) page:
 
 | File | What it is |
 |---|---|
-| `Interceptium-Setup-1.0.0.exe` | Windows: the app, which installs itself |
-| `Interceptium-1.0.0-source-windows.zip` | Source with the Windows build script (`scripts\build-windows.bat`) |
-| `Interceptium-1.0.0-source-linux.zip` | Source with `scripts/build-linux.sh` |
-| `Interceptium-1.0.0-source-macos.zip` | Source with `scripts/build-macos.sh` |
-| `Interceptium-Setup-1.0.0-source.zip` | Source with the setup build script (`scripts\build-setup.bat`); the setup is in `src/setup/` |
+| `Interceptium-Setup-1.0.1.exe` | Windows: the app, which installs itself |
+| `Interceptium-1.0.1-source-windows.zip` | Source with the Windows build script (`scripts\build-windows.bat`) |
+| `Interceptium-1.0.1-source-linux.zip` | Source with `scripts/build-linux.sh` |
+| `Interceptium-1.0.1-source-macos.zip` | Source with `scripts/build-macos.sh` |
+| `Interceptium-Setup-1.0.1-source.zip` | Source with the setup build script (`scripts\build-setup.bat`); the setup is in `src/setup/` |
 | `SHA256SUMS.txt` | Checksums of the files above |
 
 Every file is built by GitHub Actions from this repository (`.github/workflows/release.yml`). Before a release is
@@ -75,7 +75,7 @@ program: nothing is unpacked to a temporary folder and no other program is start
 Setup options (also for scripted installs):
 
 ```
-Interceptium-Setup-1.0.0.exe --install --quiet [--dir FOLDER] [--no-desktop] [--no-start-menu] [--launch] [--log FILE]
+Interceptium-Setup-1.0.1.exe --install --quiet [--dir FOLDER] [--no-desktop] [--no-start-menu] [--launch] [--log FILE]
 Interceptium.exe --repair | --reinstall | --uninstall [--remove-data] [--quiet] [--log FILE]
 ```
 
@@ -85,7 +85,7 @@ Interceptium.exe --repair | --reinstall | --uninstall [--remove-data] [--quiet] 
 2. In **Configs** (left), pick a config or press **+** to make one. Every config with its switch **on** runs, so you can mix packs.
 3. Press **Add rule**:
    - **Name:** optional.
-   - **Action:** *Replace* (with another asset ID), *Remove*, or *Local file*.
+   - **Action:** *Replace* (with another asset ID), *Remove*, *Local file*, or *CDN* (a web address; needs CDN mode).
    - **Assets:** one asset ID or asset type per field, for example `1234567` or `Image`. **Add asset** adds another field.
 4. Press the round power button to start the proxy.
 5. Press **Launch Roblox**, or join a game from the website. With **Reroute website launches** on, Interceptium restarts
@@ -99,13 +99,14 @@ Open **Activity** at the bottom to see each replaced or removed asset. Double-cl
 | Tab | Options |
 |---|---|
 | **General** | Appearance (Dark, Light, System), Clear cache on launch, Reroute website launches, Port |
-| **Roblox** | Clear the Roblox cache, open the configs and settings folder, remove Interceptium's certificate from Roblox |
+| **Roblox** | Clear the Roblox cache, open the configs and settings folder, CDN mode, remove Interceptium's certificate from Roblox |
 | **Installation** | Version and location, Repair, Reinstall, Uninstall (Windows, when installed with the setup) |
 
 ## Configs and Fleasion compatibility
 
 Interceptium uses the same JSON format as Fleasion, so you can import Fleasion configs directly with the import button
-next to **Configs**, or by dropping them into the `configs` folder (Settings > Roblox > **Open folder**).
+next to **Configs**, by dragging `.json` files onto the window, or by putting them in the `configs` folder
+(Settings > Roblox > **Open folder**).
 
 ```json
 {"replacement_rules": [
@@ -126,8 +127,16 @@ next to **Configs**, or by dropping them into the `configs` folder (Settings > R
 
 Which configs run is stored as `enabled_configs` in `settings.json`. Unknown keys in config files are kept when Interceptium saves.
 
-**Not supported on purpose:** `cdn` rules (`cdn_url`) would make Roblox download from third-party servers. They show a
-**CDN** tag marked *Not supported* and are skipped. TexturePack slot keys (`123:1`) are ignored.
+**CDN rules** (`"mode": "cdn"` with a `cdn_url`) download the replacement from a web address. They only run when
+**CDN mode** is on (Settings > Roblox, off by default; it asks before turning on). Until then they show *Off in Settings*.
+With CDN mode on, Interceptium downloads the file itself, so Roblox never connects to that address. Downloads:
+
+- use HTTPS only, with full certificate checks (no `http://`, no user names or passwords in the address);
+- go only to public internet addresses, never to this PC or your local network, even through redirects;
+- send no cookies or other personal data, follow at most 3 redirects, stop after 30 seconds and at 64 MB.
+
+The server you download from can see your IP address, and Interceptium can't check what a file contains, so only use
+CDN rules from configs you trust. TexturePack slot keys (`123:1`) are ignored.
 
 ### What happens to Roblox when you start the proxy
 
@@ -161,7 +170,7 @@ Install Rust from [rustup.rs](https://rustup.rs) (on Windows, also the Visual St
 ```
 cargo run --release            # run it
 cargo test                     # unit, setup and end-to-end proxy tests
-scripts\build-windows.bat      # Windows: dist\Interceptium-Setup-1.0.0.exe
+scripts\build-windows.bat      # Windows: dist\Interceptium-Setup-1.0.1.exe
 scripts/build-linux.sh         # Linux:   dist/interceptium
 scripts/build-macos.sh         # macOS:   dist/Interceptium
 ```

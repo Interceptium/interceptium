@@ -30,6 +30,7 @@ enum ConfirmFor {
     DeleteRule(Path_),
     RemoveFromRoblox,
     Maintenance(crate::setup::Action),
+    EnableCdn,
 }
 
 struct RuleEditor {
@@ -75,6 +76,7 @@ enum Act {
     RemoveFromRoblox,
     Maintenance(crate::setup::Action),
     ApplyPort,
+    SetCdn(bool),
 }
 
 struct Toast {
@@ -89,6 +91,12 @@ struct ConfigInfo {
     total: usize,
     on: usize,
 }
+
+/// Whether CDN mode is on, for the rule list (updated every frame).
+static CDN_ON: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Width kept free at the top right for the minimize, maximize and close buttons.
+const WINDOW_BUTTONS_W: f32 = 124.0;
 
 pub struct MainApp {
     ctl: Arc<Controller>,
@@ -115,6 +123,7 @@ pub struct MainApp {
     appearance: usize,
     last_scan: f64,
     install_dir: Option<PathBuf>,
+    corners_rounded: bool,
     #[cfg(feature = "shots")]
     pub shots: super::shots::Shots,
 }
@@ -224,6 +233,7 @@ impl MainApp {
             appearance: crate::config::THEMES.iter().position(|t| *t == settings.theme).unwrap_or(0),
             last_scan: 0.0,
             install_dir: crate::setup::install_location(),
+            corners_rounded: false,
             ctl,
             #[cfg(feature = "shots")]
             shots: super::shots::Shots::from_env(),
@@ -297,6 +307,37 @@ impl MainApp {
         self.push(ctx, PopupKind::Confirm { title: title.into(), message: message.into(), ok: ok.into(), danger, action });
     }
 
+    /// Import config files (from the Import button or dropped on the window).
+    fn import_paths(&mut self, ctx: &egui::Context, files: Vec<PathBuf>) {
+        let mut last = None;
+        let mut imported = 0;
+        let mut errors = Vec::new();
+        for f in files {
+            let name = f.file_name().unwrap_or_default().to_string_lossy().into_owned();
+            if !name.to_lowercase().ends_with(".json") {
+                errors.push(format!("{name}: not a .json file"));
+                continue;
+            }
+            match self.ctl.config.import_file(&f) {
+                Ok(n) => {
+                    self.fresh_rows.insert(n.clone());
+                    last = Some(n);
+                    imported += 1;
+                }
+                Err(e) => errors.push(format!("{name}: {e}")),
+            }
+        }
+        self.scan_configs();
+        if let Some(n) = last {
+            self.apply(ctx, Act::Select(n));
+        }
+        if !errors.is_empty() {
+            self.notify(&errors.join("\n"), true);
+        } else if imported > 0 {
+            self.notify(&if imported == 1 { "Config imported".to_string() } else { format!("{imported} configs imported") }, false);
+        }
+    }
+
     // -- actions ---------------------------------------------------------------------------
     fn apply(&mut self, ctx: &egui::Context, act: Act) {
         match act {
@@ -320,24 +361,7 @@ impl MainApp {
             }
             Act::Import => {
                 let files = rfd::FileDialog::new().set_title("Import configs").add_filter("JSON", &["json"]).add_filter("All files", &["*"]).pick_files();
-                let mut last = None;
-                let mut errors = Vec::new();
-                for f in files.unwrap_or_default() {
-                    match self.ctl.config.import_file(&f) {
-                        Ok(name) => {
-                            self.fresh_rows.insert(name.clone());
-                            last = Some(name);
-                        }
-                        Err(e) => errors.push(format!("{}: {e}", f.file_name().unwrap_or_default().to_string_lossy())),
-                    }
-                }
-                self.scan_configs();
-                if let Some(n) = last {
-                    self.apply(ctx, Act::Select(n));
-                }
-                if !errors.is_empty() {
-                    self.notify(&errors.join("\n"), true);
-                }
+                self.import_paths(ctx, files.unwrap_or_default());
             }
             Act::Export => {
                 if self.selected.is_empty() {
@@ -364,7 +388,7 @@ impl MainApp {
             }
             Act::EditRule(path) => {
                 let Some(rule) = rule_at(&mut self.config, &path).and_then(|v| v.as_object().cloned()) else { return };
-                let mode = match rule_mode(&rule) { "remove" => 1, "local" => 2, _ => 0 };
+                let mode = match rule_mode(&rule) { "remove" => 1, "local" => 2, "cdn" => 3, _ => 0 };
                 let assets: Vec<(u64, String)> = rule
                     .get("replace_ids")
                     .and_then(Value::as_array)
@@ -377,6 +401,7 @@ impl MainApp {
                 let value = match mode {
                     0 => match rule.get("with_id") { Some(Value::Null) | None => String::new(), Some(Value::String(s)) => s.clone(), Some(v) => v.to_string() },
                     2 => rule.get("local_path").and_then(Value::as_str).unwrap_or("").to_string(),
+                    3 => rule.get("cdn_url").and_then(Value::as_str).unwrap_or("").to_string(),
                     _ => String::new(),
                 };
                 let ed = RuleEditor {
@@ -449,6 +474,21 @@ impl MainApp {
                 };
                 self.confirm(ctx, title, msg, ok, danger, ConfirmFor::Maintenance(action));
             }
+            Act::SetCdn(on) => {
+                if on {
+                    self.confirm(
+                        ctx,
+                        "Turn on CDN mode?",
+                        "CDN rules download replacement files from web addresses written in your configs. When a game loads one of those assets, Interceptium connects to that address for you, so the server can see your IP address, and Interceptium can't check what the file contains. Only turn this on for configs you trust.\n\nRoblox itself never connects to these addresses. Downloads use HTTPS with certificate checks, are limited to 64 MB, and never go to this PC or your local network.",
+                        "Turn on",
+                        true,
+                        ConfirmFor::EnableCdn,
+                    );
+                } else {
+                    self.ctl.config.update_settings(|s| s.cdn_mode = false);
+                    self.notify("CDN mode is off", false);
+                }
+            }
             Act::ApplyPort => match self.port_text.trim().parse::<u16>() {
                 Ok(p) if p >= 1024 => {
                     self.ctl.config.update_settings(|s| s.port = p);
@@ -519,6 +559,10 @@ impl MainApp {
                                 Ok(Some("Removed from Roblox".into()))
                             });
                         }
+                        ConfirmFor::EnableCdn => {
+                            self.ctl.config.update_settings(|s| s.cdn_mode = true);
+                            self.notify("CDN mode is on", false);
+                        }
                         ConfirmFor::Maintenance(a) => match crate::setup::start_maintenance(*a) {
                             Ok(()) => {
                                 self.ctl.stop();
@@ -572,7 +616,7 @@ impl MainApp {
         if targets.is_empty() {
             return Err("Enter at least one asset ID or type.".into());
         }
-        let mode = ["id", "remove", "local"][ed.mode.min(2)];
+        let mode = ["id", "remove", "local", "cdn"][ed.mode.min(3)];
         let value = ed.value.trim().to_string();
         if mode == "id" && !value.is_empty() {
             match value.parse::<i64>() {
@@ -587,6 +631,14 @@ impl MainApp {
             let resolved = self.ctl.config.resolve_local(&value);
             if !std::path::Path::new(&resolved).is_file() {
                 return Err("File not found.".into());
+            }
+        }
+        if mode == "cdn" {
+            if value.is_empty() {
+                return Err("Enter a web address.".into());
+            }
+            if rules::safe_cdn_url(&value).is_none() {
+                return Err("Enter a full https:// address (no http, no user name or password).".into());
             }
         }
         if mode == "id" && value.is_empty() {
@@ -663,7 +715,7 @@ impl MainApp {
         if widgets::icon_button(&mut hc, "new-config", Icon::Plus, 32.0, t::ACCENT(), "New config").clicked() {
             acts.push(Act::NewConfig);
         }
-        if widgets::icon_button(&mut hc, "import", Icon::Import, 32.0, t::TEXT(), "Import").clicked() {
+        if widgets::button(&mut hc, "import", "Import", Some(Icon::Import), Kind::Ghost, 0.0, 32.0, true).on_hover_text("Import config files (.json); you can also drop them on the window").clicked() {
             acts.push(Act::Import);
         }
         let body = Rect::from_min_max(pos2(list.left() + 8.0, head.bottom() + 6.0), pos2(list.right() - 8.0, list.bottom() - 8.0));
@@ -756,7 +808,7 @@ impl MainApp {
             if widgets::icon_button(&mut hc, "del-config", Icon::Trash, 36.0, t::DANGER(), "Delete config").clicked() {
                 acts.push(Act::DeleteConfig);
             }
-            if widgets::icon_button(&mut hc, "export", Icon::Export, 36.0, t::TEXT(), "Export").clicked() {
+            if widgets::icon_button(&mut hc, "export", Icon::Export, 36.0, t::TEXT(), "Export this config to a file").clicked() {
                 acts.push(Act::Export);
             }
             if widgets::icon_button(&mut hc, "rename", Icon::Pencil, 36.0, t::TEXT(), "Rename").clicked() {
@@ -835,7 +887,7 @@ impl MainApp {
     fn main_shell(&mut self, ui: &mut Ui, rect: Rect, acts: &mut Vec<Act>) {
         let pad = 22.0;
         let area = rect.shrink(pad);
-        let header = Rect::from_min_size(area.min, vec2(area.width(), 46.0));
+        let header = Rect::from_min_size(area.min, vec2(area.width() - WINDOW_BUTTONS_W, 46.0));
         self.header(ui, header, acts);
         let open = tween_from(ui.ctx(), Id::unique("log-open"), 0.0, if self.log_open { 1.0 } else { 0.0 }, 0.30, anim::ease_in_out_cubic);
         let log_h = 40.0 + 150.0 * open;
@@ -955,6 +1007,12 @@ impl MainApp {
             Self::setting_row(ui, w, "Configs and settings", &root, false, |ui| {
                 if widgets::button(ui, "s-open", "Open folder", Some(Icon::Folder), Kind::Ghost, 0.0, 38.0, true).clicked() {
                     acts.push(Act::OpenFolder);
+                }
+            });
+            let mut cdn = self.ctl.config.settings().cdn_mode;
+            Self::setting_row(ui, w, "CDN mode", "Lets CDN rules download replacement files from web addresses", false, |ui| {
+                if widgets::toggle(ui, "set-cdn", &mut cdn).changed() {
+                    acts.push(Act::SetCdn(cdn));
                 }
             });
             Self::setting_row(ui, w, "Certificate in Roblox", "Takes Interceptium's changes out of Roblox", false, |ui| {
@@ -1181,7 +1239,11 @@ fn rule_card(ui: &mut Ui, path: &Path_, rule: &Map<String, Value>, depth: usize,
     let chip_rect = Rect::from_center_size(pos2(rect.right() - 18.0 - icons_w - (chip_galley.size().x + 20.0) / 2.0, rect.center().y), vec2(chip_galley.size().x + 20.0, 24.0));
     ui.painter().rect_filled(chip_rect, CornerRadius::same(12), alpha(mode_color(mode), 0.13 + 0.05 * on));
     ui.painter().galley(chip_rect.center() - chip_galley.size() / 2.0, chip_galley, mode_color(mode).gamma_multiply(0.55 + 0.45 * on));
-    let detail = rules::describe(rule);
+    let detail = if mode == "cdn" && !CDN_ON.load(std::sync::atomic::Ordering::Relaxed) {
+        "Off in Settings".to_string()
+    } else {
+        rules::describe(rule)
+    };
     let mut right_edge = chip_rect.left() - 12.0;
     if !detail.is_empty() {
         let d = widgets::elide(ui, &detail, &t::mono(12.0), 170.0);
@@ -1235,7 +1297,7 @@ fn rule_editor(ui: &mut Ui, shell_id: u64, ed: &mut RuleEditor, ctl: &Arc<Contro
     widgets::text_field(ui, ("rule-name", shell_id), &mut ed.name, "Optional", w);
     ui.add_space(4.0);
     widgets::label(ui, "Action", t::semi(12.5), t::MUTED());
-    if widgets::segmented(ui, ("rule-mode", shell_id), &["Replace", "Remove", "Local file"], &mut ed.mode, w) {
+    if widgets::segmented(ui, ("rule-mode", shell_id), &["Replace", "Remove", "Local file", "CDN"], &mut ed.mode, w) {
         ed.error.clear();
     }
     ui.add_space(4.0);
@@ -1252,7 +1314,7 @@ fn rule_editor(ui: &mut Ui, shell_id: u64, ed: &mut RuleEditor, ctl: &Arc<Contro
         let label = format!("Asset {}", index + 1);
         let lr = rc.allocate_exact_size(vec2(64.0, 40.0), Sense::hover()).0;
         rc.painter().text(pos2(lr.left(), lr.center().y), Align2::LEFT_CENTER, label, t::semi(12.5), t::FAINT());
-        let field_w = if count > 1 { w - 64.0 - 46.0 } else { w - 64.0 };
+        let field_w = if count > 1 { w - 64.0 - 46.0 } else { w - 64.0 - 2.0 };
         widgets::text_field(&mut rc, ("asset", shell_id, *aid), value, "Asset ID or type, like Image", field_w);
         if count > 1 {
             rc.add_space(6.0);
@@ -1280,7 +1342,8 @@ fn rule_editor(ui: &mut Ui, shell_id: u64, ed: &mut RuleEditor, ctl: &Arc<Contro
         vc.multiply_opacity(show);
         vc.spacing_mut().item_spacing.y = 8.0;
         let local = ed.mode == 2;
-        widgets::label(&mut vc, if local { "File" } else { "Replacement asset ID" }, t::semi(12.5), t::MUTED());
+        let cdn = ed.mode == 3;
+        widgets::label(&mut vc, if local { "File" } else if cdn { "Web address" } else { "Replacement asset ID" }, t::semi(12.5), t::MUTED());
         vc.horizontal(|ui| {
             if local {
                 widgets::text_field(ui, ("rule-value", shell_id), &mut ed.value, "Path to a file", w - 110.0);
@@ -1293,9 +1356,18 @@ fn rule_editor(ui: &mut Ui, shell_id: u64, ed: &mut RuleEditor, ctl: &Arc<Contro
                         ed.value = p.to_string_lossy().into_owned();
                     }
                 }
+            } else if cdn {
+                widgets::text_field(ui, ("rule-value", shell_id), &mut ed.value, "https://", w);
             } else {
                 widgets::text_field(ui, ("rule-value", shell_id), &mut ed.value, "Asset ID", w);
             }
+        });
+    }
+    if ed.mode == 3 && !ctl.config.settings().cdn_mode {
+        ui.horizontal(|ui| {
+            let (r, _) = ui.allocate_exact_size(vec2(16.0, 16.0), Sense::hover());
+            icons::draw(ui.painter(), Icon::Warning, r.center(), 15.0, t::WARN());
+            widgets::label(ui, "CDN rules only run when CDN mode is on (Settings > Roblox).", t::regular(12.5), t::WARN());
         });
     }
     if !ed.error.is_empty() {
@@ -1304,8 +1376,17 @@ fn rule_editor(ui: &mut Ui, shell_id: u64, ed: &mut RuleEditor, ctl: &Arc<Contro
 }
 
 impl eframe::App for MainApp {
-    fn ui(&mut self, ui: &mut Ui, _frame: &mut eframe::Frame) {
+    fn ui(&mut self, ui: &mut Ui, frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
+        if !self.corners_rounded {
+            super::chrome::round_native_corners(frame);
+            self.corners_rounded = true;
+        }
+        // JSON files dropped on the window are imported as configs
+        let dropped: Vec<PathBuf> = ctx.input(|i| i.raw.dropped_files.iter().map(|f| f.path().to_path_buf()).filter(|p| !p.as_os_str().is_empty()).collect());
+        if !dropped.is_empty() {
+            self.import_paths(&ctx, dropped);
+        }
         while let Ok(line) = self.log_rx.try_recv() {
             self.log.push(line);
         }
@@ -1326,8 +1407,11 @@ impl eframe::App for MainApp {
             self.scan_configs();
         }
         super::update_appearance(&ctx, crate::config::THEMES[self.appearance.min(2)]);
+        CDN_ON.store(self.ctl.config.settings().cdn_mode, std::sync::atomic::Ordering::Relaxed);
         let rect = ui.max_rect();
-        ui.painter().rect_filled(rect, CornerRadius::ZERO, t::BG());
+        ui.painter().rect_filled(rect, CornerRadius::same(super::chrome::window_radius(&ctx)), t::BG());
+        // the top strip moves the window; page buttons drawn later stay clickable
+        super::chrome::drag_area(ui, Rect::from_min_size(rect.min, vec2(rect.width(), 22.0 + 46.0 + 6.0)), true);
         let mut acts = Vec::new();
         let stage = tween_from(&ctx, Id::unique("stage"), 0.0, if self.settings_open { 1.0 } else { 0.0 }, 0.36, anim::ease_in_out_cubic);
         let modal = !self.popups.is_empty();
@@ -1351,6 +1435,10 @@ impl eframe::App for MainApp {
             let r = c.max_rect();
             self.settings_page(&mut c, r, &mut acts);
         }
+        let buttons = Rect::from_min_max(pos2(rect.right() - 22.0 - WINDOW_BUTTONS_W, rect.top() + 22.0), pos2(rect.right() - 22.0, rect.top() + 22.0 + 46.0));
+        let mut wc = ui.new_child(UiBuilder::new().max_rect(buttons).layout(egui::Layout::right_to_left(egui::Align::Center)));
+        super::chrome::window_buttons(&mut wc, true);
+        super::chrome::resize_edges(ui, rect);
         for a in acts {
             self.apply(&ctx, a);
         }
@@ -1362,6 +1450,11 @@ impl eframe::App for MainApp {
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
         self.ctl.stop();
+    }
+
+    fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
+        // transparent on macOS so the painted rounded corners show; elsewhere the background colour
+        if cfg!(target_os = "macos") { [0.0; 4] } else { egui::Rgba::from(t::BG()).to_array() }
     }
 }
 
@@ -1377,6 +1470,20 @@ impl MainApp {
             ed.name = "Sky".into();
             ed.assets = vec![(0, "1234567".into()), (1, "Image".into())];
             ed.value = "7654321".into();
+        }
+    }
+    pub fn shot_cdn_warning(&mut self, ctx: &egui::Context) {
+        self.settings_open = true;
+        self.tab = 1;
+        self.apply(ctx, Act::SetCdn(true));
+    }
+    pub fn shot_cdn_rule(&mut self, ctx: &egui::Context) {
+        self.apply(ctx, Act::AddRule);
+        if let Some(PopupKind::Rule(ed)) = self.popups.last_mut().map(|p| &mut p.kind) {
+            ed.name = "Skybox from CDN".into();
+            ed.mode = 3;
+            ed.assets = vec![(0, "1012345678".into())];
+            ed.value = "https://cdn.example.com/skybox/night.png".into();
         }
     }
     pub fn shot_light(&mut self) {

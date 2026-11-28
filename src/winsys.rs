@@ -271,3 +271,18 @@ pub fn open_folder(path: &Path) {
         let _ = ShellExecuteW(None, &HSTRING::from("open"), &HSTRING::from(path.as_os_str()), PCWSTR::null(), PCWSTR::null(), SW_SHOWNORMAL);
     }
 }
+
+/// Windows 11: rounded corners for a window without a system frame. Older Windows ignore it.
+pub fn round_corners(hwnd: isize) {
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::Graphics::Dwm::{DwmSetWindowAttribute, DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_ROUND};
+    unsafe {
+        let pref = DWMWCP_ROUND;
+        let _ = DwmSetWindowAttribute(
+            HWND(hwnd as *mut core::ffi::c_void),
+            DWMWA_WINDOW_CORNER_PREFERENCE,
+            &pref as *const _ as *const core::ffi::c_void,
+            std::mem::size_of_val(&pref) as u32,
+        );
+    }
+}

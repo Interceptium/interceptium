@@ -1,6 +1,7 @@
 //! The desktop window (egui).
 
 pub mod anim;
+pub mod chrome;
 pub mod icons;
 pub mod main_window;
 pub mod popup;
@@ -59,6 +60,8 @@ pub fn native_options(size: [f32; 2], min: [f32; 2], resizable: bool, renderer: 
             .with_inner_size(size)
             .with_min_inner_size(min)
             .with_resizable(resizable)
+            .with_decorations(false)
+            .with_transparent(cfg!(target_os = "macos"))
             .with_icon(Arc::new(window_icon())),
         renderer,
         centered: true,

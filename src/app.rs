@@ -66,6 +66,7 @@ impl Controller {
             router: self.router.clone(),
             upstream: proxy::default_upstream(),
             resolve: None,
+            cdn_cache: Default::default(),
         };
         let h = proxy::start(self.rt.handle(), shared, self.config.settings().port).map_err(|e| e.to_string())?;
         let port = h.port;

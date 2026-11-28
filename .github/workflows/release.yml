@@ -4,7 +4,7 @@ name: Build and release
 # virtual display, the Windows exe is built and checked with a real install, repair and
 # uninstall, and the source archives are made.
 # A manual run (Actions > Build and release > Run workflow) also replaces the GitHub
-# release for the given version (default v1.0.0).
+# release for the given version (default v1.0.1).
 on:
   push:
     branches: ["**"]
@@ -13,7 +13,7 @@ on:
       version:
         description: "Release to (re)publish; an existing release with this tag is deleted first"
         required: false
-        default: "v1.0.0"
+        default: "v1.0.1"
       reuse_run:
         description: "Optional: publish the exact files built (and scanned) by this earlier run ID instead of rebuilding"
         required: false

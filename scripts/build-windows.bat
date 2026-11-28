@@ -1,7 +1,7 @@
 @echo off
 rem Builds Interceptium for Windows. Needs Rust (https://rustup.rs) with the MSVC toolchain
 rem and the Visual Studio Build Tools ("Desktop development with C++").
-rem Output: dist\Interceptium-Setup-1.0.0.exe (the app, which is also its own setup).
+rem Output: dist\Interceptium-Setup-1.0.1.exe (the app, which is also its own setup).
 setlocal
 cd /d "%~dp0\.."
 cargo build --release --locked || exit /b 1

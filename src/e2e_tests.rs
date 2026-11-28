@@ -29,7 +29,7 @@ async fn fake_roblox() -> (u16, rustls::RootCertStore) {
     let ca_cert = ca_params.self_signed(&ca_key).unwrap();
     let issuer = Issuer::new(ca_params, ca_key);
     let key = KeyPair::generate().unwrap();
-    let leaf = CertificateParams::new(vec!["assetdelivery.roblox.com".into(), "fts.rbxcdn.com".into()])
+    let leaf = CertificateParams::new(vec!["assetdelivery.roblox.com".into(), "fts.rbxcdn.com".into(), "cdn.example.com".into()])
         .unwrap()
         .signed_by(&key, &issuer)
         .unwrap();
@@ -179,7 +179,8 @@ fn proxy_end_to_end() {
             &json!({"replacement_rules": [
                 {"name": "r", "replace_ids": ["1001"], "mode": "id", "with_id": 2002},
                 {"name": "x", "replace_ids": ["3003"], "mode": "remove"},
-                {"name": "f", "replace_ids": ["4004"], "mode": "local", "local_path": local.to_string_lossy()}
+                {"name": "f", "replace_ids": ["4004"], "mode": "local", "local_path": local.to_string_lossy()},
+                {"name": "c", "replace_ids": ["6006"], "mode": "cdn", "cdn_url": "https://cdn.example.com/pack/sky.png"}
             ]}),
         )
         .unwrap();
@@ -200,6 +201,7 @@ fn proxy_end_to_end() {
         resolve: Some(Arc::new(move |h: &str, p: u16| {
             if h == "tunnel.example" { ("127.0.0.1".into(), echo) } else { let _ = p; ("127.0.0.1".into(), up_port) }
         })),
+        cdn_cache: Default::default(),
     };
     let handle = proxy::start(rt.handle(), shared, 0).unwrap();
     let pem = ca.ca_pem();
@@ -210,13 +212,14 @@ fn proxy_end_to_end() {
             {"requestId": "a", "assetId": 1001},
             {"requestId": "b", "assetId": 3003},
             {"requestId": "c", "assetId": 4004},
-            {"requestId": "d", "assetId": 5005}
+            {"requestId": "d", "assetId": 5005},
+            {"requestId": "e", "assetId": 6006}
         ]);
         let (status, body) = request(&mut c, "POST", "/v1/assets/batch", batch.to_string().as_bytes()).await;
         assert_eq!(status, 200);
         let got: Value = serde_json::from_slice(&body).unwrap();
         let locs: Vec<&str> = got.as_array().unwrap().iter().map(|e| e["location"].as_str().unwrap()).collect();
-        assert_eq!(locs, ["https://fts.rbxcdn.com/2002?s=1", "https://fts.rbxcdn.com/4004?s=1", "https://fts.rbxcdn.com/5005?s=1"]);
+        assert_eq!(locs, ["https://fts.rbxcdn.com/2002?s=1", "https://fts.rbxcdn.com/4004?s=1", "https://fts.rbxcdn.com/5005?s=1", "https://fts.rbxcdn.com/6006?s=1"]);
         // keep-alive on the same connection: legacy endpoint
         let (s, b) = request(&mut c, "GET", "/v1/asset/?id=1001", b"").await;
         assert_eq!((s, b.as_slice()), (200, &b"upstream /v1/asset/?id=2002"[..]));
@@ -229,6 +232,9 @@ fn proxy_end_to_end() {
         assert_eq!((s, b.as_slice()), (200, &b"LOCAL BYTES"[..]));
         let (s, b) = request(&mut cdn, "GET", "/5005?s=1", b"").await;
         assert_eq!((s, b.as_slice()), (200, &b"upstream /5005?s=1"[..]));
+        // CDN mode is off by default: the CDN rule is ignored and Roblox gets the original
+        let (s, b) = request(&mut cdn, "GET", "/6006?s=1", b"").await;
+        assert_eq!((s, b.as_slice()), (200, &b"upstream /6006?s=1"[..]));
 
         // any other host is a blind tunnel
         let mut t = TcpStream::connect(("127.0.0.1", handle.port)).await.unwrap();
@@ -245,7 +251,47 @@ fn proxy_end_to_end() {
         p.read_to_end(&mut out).await.unwrap();
         assert!(out.starts_with(b"HTTP/1.1 400"));
     });
+    // With CDN mode on, Interceptium downloads the file itself and serves it.
+    store.update_settings(|s| s.cdn_mode = true);
+    rt.block_on(async {
+        let mut c = connect_through(handle.port, "assetdelivery.roblox.com", &pem).await;
+        let batch = json!([{"requestId": "z", "assetId": 6006}]);
+        let (status, _) = request(&mut c, "POST", "/v1/assets/batch", batch.to_string().as_bytes()).await;
+        assert_eq!(status, 200);
+        let mut cdn = connect_through(handle.port, "fts.rbxcdn.com", &pem).await;
+        let (s, b) = request(&mut cdn, "GET", "/6006?s=1", b"").await;
+        assert_eq!((s, b.as_slice()), (200, &b"upstream /pack/sky.png"[..]));
+        let (s, b) = request(&mut c, "GET", "/v1/asset/?id=6006", b"").await;
+        assert_eq!((s, b.as_slice()), (200, &b"upstream /pack/sky.png"[..]));
+    });
     handle.stop();
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn cdn_downloads_stay_on_the_public_internet() {
+    use std::net::IpAddr;
+    for private in ["127.0.0.1", "10.1.2.3", "192.168.1.10", "172.16.0.1", "169.254.1.1", "100.64.0.1", "0.0.0.0", "::1", "fe80::1", "fd00::1", "::ffff:127.0.0.1"] {
+        assert!(!proxy::is_public(private.parse::<IpAddr>().unwrap()), "{private}");
+    }
+    for public in ["1.1.1.1", "8.8.8.8", "2606:4700::1111"] {
+        assert!(proxy::is_public(public.parse::<IpAddr>().unwrap()), "{public}");
+    }
+    // a real resolver (no test override) refuses a name that points at this PC
+    let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+    let root = temp("cdnlocal");
+    let shared = Shared {
+        config: Arc::new(ConfigStore::open(root.clone())),
+        ca: Arc::new(CertAuthority::open(&root.join("ca")).unwrap()),
+        router: Arc::new(AssetRouter::default()),
+        upstream: proxy::default_upstream(),
+        resolve: None,
+        cdn_cache: Default::default(),
+    };
+    let err = rt.block_on(proxy::fetch_cdn(&shared, "https://localhost:9/x.png")).unwrap_err();
+    assert!(err.contains("public"), "{err}");
+    let err = rt.block_on(proxy::fetch_cdn(&shared, "http://example.com/x.png")).unwrap_err();
+    assert!(err.contains("https"), "{err}");
     let _ = std::fs::remove_dir_all(root);
 }
 

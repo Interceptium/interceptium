@@ -60,6 +60,7 @@ pub struct SetupApp {
     installed: Option<Manifest>,
     progress: Arc<Mutex<(f32, String)>>,
     appearance: String,
+    corners_rounded: bool,
     result: Option<mpsc::Receiver<Result<PathBuf, String>>>,
     #[cfg(feature = "shots")]
     shots: crate::gui::shots::Shots,
@@ -90,6 +91,7 @@ impl SetupApp {
             installed,
             progress: Arc::new(Mutex::new((0.0, "Starting".into()))),
             appearance: crate::config::saved_theme(&crate::paths::data_dir_path()),
+            corners_rounded: false,
             result: None,
             #[cfg(feature = "shots")]
             shots: crate::gui::shots::Shots::from_env(),
@@ -364,8 +366,12 @@ fn footer(ui: &mut Ui, add: impl FnOnce(&mut Ui)) {
 }
 
 impl eframe::App for SetupApp {
-    fn ui(&mut self, ui: &mut Ui, _frame: &mut eframe::Frame) {
+    fn ui(&mut self, ui: &mut Ui, frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
+        if !self.corners_rounded {
+            crate::gui::chrome::round_native_corners(frame);
+            self.corners_rounded = true;
+        }
         if let Some(rx) = &self.result {
             if let Ok(r) = rx.try_recv() {
                 self.result = None;
@@ -385,12 +391,16 @@ impl eframe::App for SetupApp {
         }
         crate::gui::update_appearance(&ctx, &self.appearance);
         let rect = ui.max_rect();
-        ui.painter().rect_filled(rect, CornerRadius::ZERO, t::BG());
+        ui.painter().rect_filled(rect, CornerRadius::same(crate::gui::chrome::window_radius(&ctx)), t::BG());
+        crate::gui::chrome::drag_area(ui, Rect::from_min_size(rect.min, vec2(rect.width(), 76.0)), false);
         // header
         let head = Rect::from_min_size(rect.min + vec2(28.0, 22.0), vec2(rect.width() - 56.0, 36.0));
         ui.painter().image(self.logo.id(), Rect::from_center_size(pos2(head.left() + 17.0, head.center().y), vec2(34.0, 34.0)), Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
         ui.painter().text(pos2(head.left() + 44.0, head.center().y), Align2::LEFT_CENTER, "Interceptium Setup", t::semi(16.0), t::TEXT());
-        ui.painter().text(pos2(head.right(), head.center().y), Align2::RIGHT_CENTER, format!("Version {}", crate::VERSION), t::regular(12.5), t::FAINT());
+        ui.painter().text(pos2(head.right() - 84.0, head.center().y), Align2::RIGHT_CENTER, format!("Version {}", crate::VERSION), t::regular(12.5), t::FAINT());
+        let buttons = Rect::from_min_max(pos2(head.right() - 76.0, head.top()), pos2(head.right() + 6.0, head.bottom()));
+        let mut wc = ui.new_child(UiBuilder::new().max_rect(buttons).layout(egui::Layout::right_to_left(egui::Align::Center)));
+        crate::gui::chrome::window_buttons(&mut wc, false);
         let line = Rect::from_min_size(pos2(rect.left(), head.bottom() + 18.0), vec2(rect.width(), 1.0));
         ui.painter().rect_filled(line, CornerRadius::ZERO, alpha(t::LINE(), 0.6));
         // body slides in from the right on every change

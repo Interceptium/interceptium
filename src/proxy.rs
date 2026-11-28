@@ -9,7 +9,10 @@
 use crate::certs::{provider, CertAuthority};
 use crate::config::ConfigStore;
 use crate::http1::{self, protocol_error, Message};
-use crate::router::{is_intercepted, AssetRouter, Single, ASSET_HOST, BATCH_PATH, CDN_HOSTS};
+use crate::router::{is_intercepted, AssetRouter, Single, Source, ASSET_HOST, BATCH_PATH, CDN_HOSTS};
+use std::collections::HashMap;
+use std::net::{IpAddr, SocketAddr};
+use std::sync::Mutex;
 use std::io;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -49,6 +52,64 @@ pub struct Shared {
     pub router: Arc<AssetRouter>,
     pub upstream: Arc<rustls::ClientConfig>,
     pub resolve: Option<Resolver>,
+    pub cdn_cache: Arc<CdnCache>,
+}
+
+/// Files downloaded for CDN rules, kept in memory so each address is fetched once.
+#[derive(Default)]
+pub struct CdnCache {
+    inner: Mutex<(HashMap<String, Arc<Vec<u8>>>, usize)>,
+}
+
+const CDN_CACHE_MAX: usize = 256 * 1024 * 1024;
+const CDN_TIMEOUT: Duration = Duration::from_secs(30);
+const CDN_MAX_REDIRECTS: usize = 3;
+
+impl CdnCache {
+    fn get(&self, url: &str) -> Option<Arc<Vec<u8>>> {
+        self.inner.lock().unwrap_or_else(|e| e.into_inner()).0.get(url).cloned()
+    }
+    fn put(&self, url: &str, data: Arc<Vec<u8>>) {
+        let mut g = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        if g.1 + data.len() > CDN_CACHE_MAX {
+            g.0.clear();
+            g.1 = 0;
+        }
+        g.1 += data.len();
+        g.0.insert(url.to_string(), data);
+    }
+}
+
+/// Addresses CDN downloads may go to: public internet only, never this PC or the local network.
+pub fn is_public(ip: IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(v4) => {
+            let o = v4.octets();
+            !(v4.is_private()
+                || v4.is_loopback()
+                || v4.is_link_local()
+                || v4.is_broadcast()
+                || v4.is_documentation()
+                || v4.is_unspecified()
+                || v4.is_multicast()
+                || o[0] == 0
+                || (o[0] == 100 && (64..128).contains(&o[1]))
+                || (o[0] == 198 && (o[1] == 18 || o[1] == 19))
+                || o[0] >= 240)
+        }
+        IpAddr::V6(v6) => {
+            if let Some(v4) = v6.to_ipv4_mapped() {
+                return is_public(IpAddr::V4(v4));
+            }
+            let s = v6.segments();
+            !(v6.is_loopback()
+                || v6.is_unspecified()
+                || v6.is_multicast()
+                || (s[0] & 0xfe00) == 0xfc00
+                || (s[0] & 0xffc0) == 0xfe80
+                || (s[0] == 0x2001 && s[1] == 0x0db8))
+        }
+    }
 }
 
 impl Shared {
@@ -242,6 +303,84 @@ async fn open_upstream(s: &Shared, host: &str) -> io::Result<Up> {
     Ok(Up { r: BufReader::with_capacity(1 << 16, r), w })
 }
 
+/// Download a CDN rule's file. Interceptium makes this request itself (Roblox never sees the
+/// address): HTTPS with full certificate checks, public addresses only, no cookies or other
+/// personal data, limited size, time and redirects.
+pub async fn fetch_cdn(s: &Shared, url: &str) -> Result<Vec<u8>, String> {
+    let work = async {
+        let mut current = url.to_string();
+        for _ in 0..=CDN_MAX_REDIRECTS {
+            let safe = crate::rules::safe_cdn_url(&current).ok_or("not an https address")?;
+            let rest = &safe[8..];
+            let split = rest.find(['/', '?', '#']).unwrap_or(rest.len());
+            let authority = &rest[..split];
+            let mut path = rest[split..].split('#').next().unwrap_or("").to_string();
+            if !path.starts_with('/') {
+                path.insert(0, '/');
+            }
+            let (host, port) = split_host_port(authority, 443).map_err(|e| e.to_string())?;
+            let (h, p) = s.target(&host, port);
+            let addrs: Vec<SocketAddr> = tokio::net::lookup_host((h.as_str(), p)).await.map_err(|e| e.to_string())?.collect();
+            // Every address must be public (blocks names that point at this PC or the local network).
+            if addrs.is_empty() || (s.resolve.is_none() && !addrs.iter().all(|a| is_public(a.ip()))) {
+                return Err("address is not on the public internet".to_string());
+            }
+            let tcp = timeout(CONNECT_TIMEOUT, TcpStream::connect(addrs[0])).await.map_err(|_| "connection timed out".to_string())?.map_err(|e| e.to_string())?;
+            let name = rustls::pki_types::ServerName::try_from(host.clone()).map_err(|_| "bad host name".to_string())?;
+            let tls = tokio_rustls::TlsConnector::from(s.upstream.clone()).connect(name, tcp).await.map_err(|e| e.to_string())?;
+            let (r, mut w) = tokio::io::split(tls);
+            let mut r = BufReader::new(r);
+            let req = format!(
+                "GET {path} HTTP/1.1\r\nHost: {authority}\r\nUser-Agent: Interceptium/{}\r\nAccept: */*\r\nAccept-Encoding: gzip\r\nConnection: close\r\n\r\n",
+                crate::VERSION
+            );
+            w.write_all(req.as_bytes()).await.map_err(|e| e.to_string())?;
+            w.flush().await.map_err(|e| e.to_string())?;
+            let head = http1::read_head(&mut r).await.map_err(|e| e.to_string())?.ok_or("no answer")?;
+            let status = head.status();
+            if (300..400).contains(&status) {
+                let loc = head.headers.get("location").trim().to_string();
+                current = if loc.starts_with('/') && !loc.starts_with("//") { format!("https://{authority}{loc}") } else { loc };
+                continue;
+            }
+            if status != 200 {
+                return Err(format!("the server answered {status}"));
+            }
+            let body = http1::read_body(&mut r, &head, Some("GET")).await.map_err(|e| e.to_string())?;
+            return http1::decode_content(&body, head.headers.get("content-encoding")).ok_or_else(|| "unreadable content".to_string());
+        }
+        Err("too many redirects".to_string())
+    };
+    timeout(CDN_TIMEOUT, work).await.map_err(|_| "timed out".to_string())?
+}
+
+async fn send_source<W: AsyncWrite + Unpin>(s: &Shared, w: &mut W, source: &Source) -> io::Result<()> {
+    match source {
+        Source::File(path) => send_local(w, path).await,
+        Source::Url(url) => {
+            let data = match s.cdn_cache.get(url) {
+                Some(d) => Some(d),
+                None => match fetch_cdn(s, url).await {
+                    Ok(d) => {
+                        let d = Arc::new(d);
+                        s.cdn_cache.put(url, d.clone());
+                        Some(d)
+                    }
+                    Err(e) => {
+                        crate::log!("CDN", "could not download from {}: {e}", crate::rules::cdn_host(url));
+                        None
+                    }
+                },
+            };
+            match data {
+                Some(d) => w.write_all(&http1::simple_response(200, "OK", &d, "application/octet-stream")).await?,
+                None => w.write_all(&http1::simple_response(502, "Bad Gateway", b"CDN download failed\n", "text/plain")).await?,
+            }
+            w.flush().await
+        }
+    }
+}
+
 async fn send_local<W: AsyncWrite + Unpin>(w: &mut W, path: &str) -> io::Result<()> {
     let data = tokio::fs::metadata(path).await.ok().filter(|m| m.is_file()).map(|_| ());
     let bytes = match data {
@@ -276,8 +415,8 @@ async fn mitm_loop<S: AsyncRead + AsyncWrite + Unpin>(s: &Shared, host: &str, cl
         let path = req.target().to_string();
 
         if CDN_HOSTS.contains(&host) {
-            if let Some(local) = s.router.cdn_file_for(host, &path) {
-                send_local(&mut cw, &local).await?;
+            if let Some(source) = s.router.cdn_file_for(host, &path) {
+                send_source(s, &mut cw, &source).await?;
                 if req.wants_close() {
                     return Ok(());
                 }
@@ -293,8 +432,8 @@ async fn mitm_loop<S: AsyncRead + AsyncWrite + Unpin>(s: &Shared, host: &str, cl
                     cw.flush().await?;
                     continue;
                 }
-                Single::File(local) => {
-                    send_local(&mut cw, &local).await?;
+                Single::Serve(source) => {
+                    send_source(s, &mut cw, &source).await?;
                     continue;
                 }
                 Single::Replace(new_target) => req.set_target(&new_target),
