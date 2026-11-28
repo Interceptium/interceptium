@@ -15,12 +15,12 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::Duration;
 
-pub const APP_NAME: &str = "Interceptium";
-pub const PUBLISHER: &str = "Interceptium";
-pub const APP_EXE: &str = "Interceptium.exe";
+pub const APP_NAME: &str = concat!(crate::brand_name!());
+pub const PUBLISHER: &str = concat!(crate::brand_name!());
+pub const APP_EXE: &str = concat!(crate::brand_name!(), ".exe");
 pub const MANIFEST: &str = "install.json";
-pub const SHORTCUT: &str = "Interceptium.lnk";
-pub const MOVED_PREFIX: &str = "Interceptium-removed-";
+pub const SHORTCUT: &str = concat!(crate::brand_name!(), ".lnk");
+pub const MOVED_PREFIX: &str = concat!(crate::brand_name!(), "-removed-");
 
 #[cfg_attr(not(windows), allow(dead_code))]
 pub enum EntryValue {
@@ -221,7 +221,7 @@ impl Installer {
             return Err("Choose a full folder path.".into());
         }
         let app = directory.join(APP_EXE);
-        progress(0.04, "Closing Interceptium");
+        progress(0.04, concat!("Closing ", crate::brand_name!()));
         self.ops.stop_app(&app);
         progress(0.08, "Creating folder");
         let probe = directory.join(".write-test");
@@ -233,9 +233,9 @@ impl Installer {
         let previous = Manifest::load(&directory);
 
         if !same_file(&source, &app) {
-            progress(0.12, "Copying Interceptium");
-            copy_with_progress(&source, &app, &|f| progress(0.12 + 0.66 * f, "Copying Interceptium"))
-                .map_err(|e| format!("Can't copy Interceptium: {e}"))?;
+            progress(0.12, concat!("Copying ", crate::brand_name!()));
+            copy_with_progress(&source, &app, &|f| progress(0.12 + 0.66 * f, concat!("Copying ", crate::brand_name!())))
+                .map_err(|e| format!(concat!("Can't copy ", crate::brand_name!(), ": {e}"), e = e))?;
         }
         let files = vec![APP_EXE.to_string()];
 
@@ -306,7 +306,7 @@ impl Installer {
     pub fn uninstall(&self, directory: &Path, remove_data: bool, progress: Progress) -> Result<(), String> {
         let manifest = Manifest::load(directory);
         let app = directory.join(APP_EXE);
-        progress(0.05, "Closing Interceptium");
+        progress(0.05, concat!("Closing ", crate::brand_name!()));
         self.ops.stop_app(&app);
         progress(0.15, "Removing changes made to Roblox");
         self.ops.remove_roblox_changes();
@@ -363,12 +363,12 @@ impl Installer {
     }
 
     pub fn repair(&self, progress: Progress) -> Result<Manifest, String> {
-        let m = self.installed().ok_or("Interceptium is not installed.")?;
+        let m = self.installed().ok_or(concat!(crate::brand_name!(), " is not installed."))?;
         self.install(&m.options(), progress)
     }
 
     pub fn reinstall(&self, progress: Progress) -> Result<Manifest, String> {
-        let m = self.installed().ok_or("Interceptium is not installed.")?;
+        let m = self.installed().ok_or(concat!(crate::brand_name!(), " is not installed."))?;
         let options = m.options();
         // Keep the program bytes: when this is the installed copy, uninstall moves it aside.
         self.uninstall(&options.directory, false, &|v, t| progress(v * 0.45, t))?;
@@ -449,7 +449,7 @@ pub mod tests {
             self.state.lock().unwrap().entry = None;
         }
         fn user_data_dir(&self) -> PathBuf {
-            self.root.join("data").join("Interceptium")
+            self.root.join("data").join(APP_NAME)
         }
         fn temp_dir(&self) -> PathBuf {
             self.root.join("tmp")
@@ -492,7 +492,7 @@ pub mod tests {
         assert_eq!(inst.installed().unwrap().version, "1.0.0");
 
         std::fs::write(o.directory.join("user-file.txt"), b"keep me").unwrap();
-        let data = root.join("data").join("Interceptium");
+        let data = root.join("data").join(APP_NAME);
         std::fs::create_dir_all(&data).unwrap();
         inst.uninstall(&o.directory, false, &|_, _| {}).unwrap();
         assert!(!o.directory.join(APP_EXE).exists());

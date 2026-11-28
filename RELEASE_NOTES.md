@@ -1,4 +1,9 @@
-**Interceptium 1.0.1**
+**Interceptium 1.0.2**
+
+### New in 1.0.2
+- **.obj models**: point an asset ID straight at an `.obj` file with a Local file rule. Roblox can't read `.obj`, so Interceptium converts it to a Roblox mesh when the game asks for it (polygons are split into triangles; missing normals are computed).
+
+### From 1.0.1
 
 ### New
 - **Own title bar** with rounded window buttons (minimize, maximize, close). Drag it to move the window, double-click to maximize, resize from any edge. Rounded window corners on Windows 11 and macOS.
@@ -19,10 +24,10 @@
 ### Downloads
 | File | |
 |---|---|
-| `Interceptium-Setup-1.0.1.exe` | Windows: the app, which installs itself |
-| `Interceptium-1.0.1-source-windows.zip` | Source + Windows build script |
-| `Interceptium-1.0.1-source-linux.zip` | Source + Linux build script |
-| `Interceptium-1.0.1-source-macos.zip` | Source + macOS build script |
-| `Interceptium-Setup-1.0.1-source.zip` | Source + setup build script |
+| `Interceptium-Setup-1.0.2.exe` | Windows: the app, which installs itself |
+| `Interceptium-1.0.2-source-windows.zip` | Source + Windows build script |
+| `Interceptium-1.0.2-source-linux.zip` | Source + Linux build script |
+| `Interceptium-1.0.2-source-macos.zip` | Source + macOS build script |
+| `Interceptium-Setup-1.0.2-source.zip` | Source + setup build script |
 
 Check your download against `SHA256SUMS.txt`.

@@ -67,6 +67,8 @@ enum Act {
     DeleteRule(Path_),
     ToggleRule(Path_, bool),
     OpenSettings,
+    OpenGuide,
+    OpenConfigsFolder,
     CloseSettings,
     ToggleProxy,
     Launch,
@@ -111,6 +113,8 @@ pub struct MainApp {
     popups: Vec<Popup>,
     next_id: u64,
     settings_open: bool,
+    /// The side page shows the guide instead of settings (Hidoceptium only).
+    guide: bool,
     tab: usize,
     log_open: bool,
     log: Vec<String>,
@@ -159,7 +163,7 @@ fn targets_text(rule: &Map<String, Value>) -> String {
         .map(|a| a.iter().map(|v| match v { Value::String(s) => s.clone(), o => o.to_string() }).collect())
         .unwrap_or_default();
     if ids.is_empty() {
-        return "No assets".into();
+        return crate::i18n::t("No assets").into_owned();
     }
     let shown: Vec<&str> = ids.iter().take(3).map(String::as_str).collect();
     let mut s = shown.join(", ");
@@ -221,6 +225,7 @@ impl MainApp {
             popups: Vec::new(),
             next_id: 1,
             settings_open: false,
+            guide: false,
             tab: 0,
             log_open: false,
             log: crate::logbus::history(),
@@ -280,7 +285,8 @@ impl MainApp {
     }
 
     fn notify(&mut self, text: &str, error: bool) {
-        self.toast = Some(Toast { text: text.to_string(), error, at: f64::NAN });
+        let text: String = text.lines().map(|l| crate::i18n::t(l).into_owned()).collect::<Vec<_>>().join("\n");
+        self.toast = Some(Toast { text, error, at: f64::NAN });
     }
 
     fn run_job(&mut self, ctx: &egui::Context, work: impl FnOnce() -> Result<Option<String>, String> + Send + 'static) {
@@ -360,14 +366,14 @@ impl MainApp {
                 }
             }
             Act::Import => {
-                let files = rfd::FileDialog::new().set_title("Import configs").add_filter("JSON", &["json"]).add_filter("All files", &["*"]).pick_files();
+                let files = rfd::FileDialog::new().set_title(crate::i18n::t("Import configs")).add_filter("JSON", &["json"]).add_filter(crate::i18n::t("All files"), &["*"]).pick_files();
                 self.import_paths(ctx, files.unwrap_or_default());
             }
             Act::Export => {
                 if self.selected.is_empty() {
                     return;
                 }
-                let dest = rfd::FileDialog::new().set_title("Export config").set_file_name(format!("{}.json", self.selected)).add_filter("JSON", &["json"]).save_file();
+                let dest = rfd::FileDialog::new().set_title(crate::i18n::t("Export config")).set_file_name(format!("{}.json", self.selected)).add_filter("JSON", &["json"]).save_file();
                 if let Some(d) = dest {
                     self.save();
                     match self.ctl.config.export(&self.selected, &d) {
@@ -425,8 +431,14 @@ impl MainApp {
                     self.save();
                 }
             }
+            Act::OpenGuide => {
+                self.settings_open = true;
+                self.guide = true;
+            }
+            Act::OpenConfigsFolder => open_path(&self.ctl.config.folder),
             Act::OpenSettings => {
                 self.settings_open = true;
+                self.guide = false;
                 self.port_text = self.ctl.config.settings().port.to_string();
                 self.install_dir = crate::setup::install_location();
             }
@@ -460,7 +472,7 @@ impl MainApp {
             Act::RemoveFromRoblox => self.confirm(
                 ctx,
                 "Remove from Roblox",
-                "Interceptium's certificate and setting will be removed from every Roblox install. The proxy turns them back on when it starts.",
+                concat!(crate::brand_name!(), "'s certificate and setting will be removed from every Roblox install. The proxy turns them back on when it starts."),
                 "Remove",
                 true,
                 ConfirmFor::RemoveFromRoblox,
@@ -468,9 +480,9 @@ impl MainApp {
             Act::Maintenance(action) => {
                 use crate::setup::Action as A;
                 let (title, msg, ok, danger) = match action {
-                    A::Repair => ("Repair", "Interceptium will close and its files will be restored.", "Repair", false),
-                    A::Reinstall => ("Reinstall", "Interceptium will close, be removed and installed again. Configs are kept.", "Reinstall", false),
-                    _ => ("Uninstall", "Interceptium will close and open its uninstaller.", "Uninstall", true),
+                    A::Repair => ("Repair", concat!(crate::brand_name!(), " will close and its files will be restored."), "Repair", false),
+                    A::Reinstall => ("Reinstall", concat!(crate::brand_name!(), " will close, be removed and installed again. Configs are kept."), "Reinstall", false),
+                    _ => ("Uninstall", concat!(crate::brand_name!(), " will close and open its uninstaller."), "Uninstall", true),
                 };
                 self.confirm(ctx, title, msg, ok, danger, ConfirmFor::Maintenance(action));
             }
@@ -479,7 +491,7 @@ impl MainApp {
                     self.confirm(
                         ctx,
                         "Turn on CDN mode?",
-                        "CDN rules download replacement files from web addresses written in your configs. When a game loads one of those assets, Interceptium connects to that address for you, so the server can see your IP address, and Interceptium can't check what the file contains. Only turn this on for configs you trust.\n\nRoblox itself never connects to these addresses. Downloads use HTTPS with certificate checks, are limited to 64 MB, and never go to this PC or your local network.",
+                        concat!("CDN rules download replacement files from web addresses written in your configs. When a game loads one of those assets, ", crate::brand_name!(), " connects to that address for you, so the server can see your IP address, and ", crate::brand_name!(), " can't check what the file contains. Only turn this on for configs you trust.\n\nRoblox itself never connects to these addresses. Downloads use HTTPS with certificate checks, are limited to 64 MB, and never go to this PC or your local network."),
                         "Turn on",
                         true,
                         ConfirmFor::EnableCdn,
@@ -665,11 +677,14 @@ impl MainApp {
         let p = ui.painter();
         let logo_rect = Rect::from_center_size(pos2(rect.left() + 20.0, rect.center().y), vec2(40.0, 40.0));
         p.image(self.logo.id(), logo_rect, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
-        p.text(pos2(rect.left() + 52.0, rect.center().y), Align2::LEFT_CENTER, "Interceptium", t::semi(21.0), t::TEXT());
+        p.text(pos2(rect.left() + 52.0, rect.center().y), Align2::LEFT_CENTER, concat!(crate::brand_name!()), t::semi(21.0), t::TEXT());
         let right = Rect::from_min_max(pos2(rect.right() - 320.0, rect.top()), rect.max);
         let mut child = ui.new_child(UiBuilder::new().max_rect(right).layout(egui::Layout::right_to_left(egui::Align::Center)));
         if widgets::icon_button(&mut child, "gear", Icon::Gear, 38.0, t::TEXT(), "Settings").clicked() {
             acts.push(Act::OpenSettings);
+        }
+        if crate::brand::HIDO && widgets::icon_button(&mut child, "guide", Icon::Book, 38.0, t::TEXT(), "Guide").clicked() {
+            acts.push(Act::OpenGuide);
         }
         child.add_space(6.0);
         let (status, text) = if self.busy > 0 {
@@ -710,7 +725,7 @@ impl MainApp {
         let list = Rect::from_min_max(pos2(rect.left(), proxy.bottom() + 16.0), rect.max);
         widgets::panel(ui.painter(), list, 22, t::CARD());
         let head = Rect::from_min_size(list.min + vec2(18.0, 12.0), vec2(list.width() - 30.0, 36.0));
-        ui.painter().text(pos2(head.left(), head.center().y), Align2::LEFT_CENTER, "Configs", t::semi(15.0), t::TEXT());
+        ui.painter().text(pos2(head.left(), head.center().y), Align2::LEFT_CENTER, crate::i18n::t("Configs"), t::semi(15.0), t::TEXT());
         let mut hc = ui.new_child(UiBuilder::new().max_rect(head).layout(egui::Layout::right_to_left(egui::Align::Center)));
         if widgets::icon_button(&mut hc, "new-config", Icon::Plus, 32.0, t::ACCENT(), "New config").clicked() {
             acts.push(Act::NewConfig);
@@ -773,7 +788,7 @@ impl MainApp {
         let title = widgets::elide(ui, name, &t::semi(14.0), text_w);
         painter.text(pos2(body.left() + 16.0, body.top() + 20.0), Align2::LEFT_CENTER, title, t::semi(14.0), t::TEXT().gamma_multiply(fade));
         let count = info.map(|i| plural(i.total, "rule")).unwrap_or_default();
-        painter.text(pos2(body.left() + 16.0, body.top() + 39.0), Align2::LEFT_CENTER, count, t::regular(12.5), t::MUTED().gamma_multiply(fade));
+        painter.text(pos2(body.left() + 16.0, body.top() + 39.0), Align2::LEFT_CENTER, crate::i18n::t(&count), t::regular(12.5), t::MUTED().gamma_multiply(fade));
         if !gone {
             let mut enabled = self.ctl.config.is_enabled(name);
             let toggle_rect = Rect::from_center_size(pos2(body.right() - 34.0, body.center().y), vec2(40.0, 22.0));
@@ -795,9 +810,9 @@ impl MainApp {
         let (total, on) = self.info.get(&self.selected).map(|i| (i.total, i.on)).unwrap_or((0, 0));
         let head = Rect::from_min_size(inner.min, vec2(inner.width(), 52.0));
         let title = if self.selected.is_empty() { "No config".to_string() } else { widgets::elide(ui, &self.selected, &t::semi(22.0), head.width() - 330.0) };
-        ui.painter().text(pos2(head.left(), head.top() + 15.0), Align2::LEFT_CENTER, title, t::semi(22.0), t::TEXT().gamma_multiply(fade));
+        ui.painter().text(pos2(head.left(), head.top() + 15.0), Align2::LEFT_CENTER, crate::i18n::t(&title), t::semi(22.0), t::TEXT().gamma_multiply(fade));
         let sub = format!("{}, {} enabled", plural(total, "rule"), on);
-        ui.painter().text(pos2(head.left(), head.top() + 40.0), Align2::LEFT_CENTER, sub, t::regular(13.0), t::MUTED().gamma_multiply(fade));
+        ui.painter().text(pos2(head.left(), head.top() + 40.0), Align2::LEFT_CENTER, crate::i18n::t(&sub), t::regular(13.0), t::MUTED().gamma_multiply(fade));
         let mut hc = ui.new_child(UiBuilder::new().max_rect(head).layout(egui::Layout::right_to_left(egui::Align::Center)));
         let has = !self.selected.is_empty();
         if widgets::button(&mut hc, "add-rule", "Add rule", Some(Icon::Plus), Kind::Primary, 0.0, 40.0, has).clicked() {
@@ -857,7 +872,7 @@ impl MainApp {
             acts.push(Act::ToggleLog);
         }
         let hover = tween_bool(ui.ctx(), Id::unique("log-hover"), resp.hovered(), 0.14);
-        ui.painter().text(pos2(head.left() + 18.0, head.center().y), Align2::LEFT_CENTER, "Activity", t::semi(13.5), mix(t::MUTED(), t::TEXT(), hover));
+        ui.painter().text(pos2(head.left() + 18.0, head.center().y), Align2::LEFT_CENTER, crate::i18n::t("Activity"), t::semi(13.5), mix(t::MUTED(), t::TEXT(), hover));
         let last = self.log.last().cloned().unwrap_or_default();
         if open < 0.5 && !last.is_empty() {
             let shown = widgets::elide(ui, &last, &t::mono(12.0), head.width() - 180.0);
@@ -941,11 +956,85 @@ impl MainApp {
         }
     }
 
+    fn guide_page(&mut self, ui: &mut Ui, rect: Rect, acts: &mut Vec<Act>) {
+        let area = rect.shrink(22.0);
+        let header = Rect::from_min_size(area.min, vec2(area.width() - WINDOW_BUTTONS_W, 46.0));
+        let mut hc = ui.new_child(UiBuilder::new().max_rect(header).layout(egui::Layout::left_to_right(egui::Align::Center)));
+        if widgets::icon_button(&mut hc, "guide-back", Icon::Back, 38.0, t::TEXT(), "Back").clicked() {
+            acts.push(Act::CloseSettings);
+        }
+        hc.add_space(6.0);
+        widgets::label(&mut hc, "Rehber", t::semi(21.0), t::TEXT());
+        if ui.input(|i| i.key_pressed(egui::Key::Escape)) && self.popups.is_empty() {
+            acts.push(Act::CloseSettings);
+        }
+        let col_w = area.width().min(780.0);
+        let body = Rect::from_min_max(pos2(area.center().x - col_w / 2.0 - 8.0, header.bottom() + 16.0), pos2(area.center().x + col_w / 2.0 + 8.0, area.bottom()));
+        let mut bc = ui.new_child(UiBuilder::new().max_rect(body));
+        let folder = self.ctl.config.folder.to_string_lossy().into_owned();
+        egui::ScrollArea::vertical().id_salt("guide").auto_shrink([false, false]).show(&mut bc, |ui| {
+            ui.spacing_mut().item_spacing.y = 14.0;
+            let w = col_w;
+            guide_card(ui, w, Icon::Shield, t::ACCENT(), "Hidoceptium nasıl çalışır?", |ui| {
+                guide_text(ui, "Oyun bir doku, ses veya model istediğinde Hidoceptium araya girer ve onu senin seçtiğinle değiştirir. Her şey bu bilgisayarda olur: değişiklikleri sadece sen görürsün, hesabına veya oyuna dokunulmaz.");
+            });
+            guide_card(ui, w, Icon::Play, t::ACCENT(), "1. Başlarken", |ui| {
+                guide_step(ui, 1, "Soldaki büyük yuvarlak düğmeye bas; proxy çalışmaya başlar ve üstte \"Çalışıyor\" yazar.");
+                guide_step(ui, 2, "\"Roblox'u başlat\" ile oyunu aç. Web sitesinden de girebilirsin: Ayarlar > Genel'de \"Web sitesinden açılan oyunları yönlendir\" açıksa Hidoceptium oyunu kendisi yakalar.");
+                guide_step(ui, 3, "Bir kuralı ekledikten veya değiştirdikten sonra Roblox'u kapat ve önbelleği temizle. Yoksa Roblox eski dosyayı hatırlar ve değişikliği göremezsin.");
+            });
+            guide_card(ui, w, Icon::Search, t::BLUE(), "2. Varlık kimliği (ID) nasıl bulunur?", |ui| {
+                guide_text(ui, "Oyundaki her dokunun, sesin ve modelin bir numarası vardır. Değiştirmek istediğin şeyin numarasını bul:");
+                guide_step(ui, 1, "Roblox Studio'da nesneyi seç. Özellikler'de MeshId, TextureID veya SoundId alanında şuna benzer bir yazı vardır:");
+                guide_code(ui, "rbxassetid://123456789");
+                guide_text(ui, "Sondaki sayı (123456789) varlık kimliğidir.");
+                guide_step(ui, 2, "Creator Store sayfasının adresindeki sayı da kimliktir: roblox.com/library/123456789/...");
+                guide_step(ui, 3, "Bir türün hepsini değiştirmek için sayı yerine tür adı yazabilirsin: Image (tüm resimler), Audio (tüm sesler), Mesh (tüm modeller).");
+            });
+            guide_card(ui, w, Icon::Folder, t::WARN(), "3. Yerel dosyalar nereye kaydedilir?", |ui| {
+                guide_text(ui, "Dosyalarını config'lerin yanına, configs klasörüne koy. Böylece bir config'i paylaştığında dosyaları da yanında gider. Senin configs klasörün:");
+                guide_code(ui, &folder);
+                if widgets::button(ui, "guide-open-folder", "Configs klasörünü aç", Some(Icon::Folder), Kind::Ghost, 0.0, 38.0, true).clicked() {
+                    acts.push(Act::OpenConfigsFolder);
+                }
+                guide_step(ui, 1, "Configs klasörünün içinde yeni bir klasör aç, örneğin Kilic.");
+                guide_step(ui, 2, "Dosyalarını o klasöre koy:");
+                guide_code(ui, "configs/\n  Kilic Paketi.json\n  Kilic/\n    kilic.obj\n    kilic.png");
+                guide_step(ui, 3, "Kuralda İşlem olarak \"Yerel dosya\" seç ve dosya yoluna şunu yaz:");
+                guide_code(ui, "/Kilic/kilic.obj");
+                guide_text(ui, "Baştaki / işareti \"configs klasörünün içinde\" demek. İstersen \"Gözat\" ile bilgisayarındaki herhangi bir dosyayı da seçebilirsin; o zaman tam yol kaydedilir ama config'i paylaşınca dosya gitmez.");
+            });
+            guide_card(ui, w, Icon::Box, t::ACCENT(), "4. 3D model (.obj) değiştirme", |ui| {
+                guide_step(ui, 1, "Değiştirmek istediğin modelin MeshId numarasını bul (2. bölüm).");
+                guide_step(ui, 2, "Modelini Blender gibi bir programdan .obj olarak dışa aktar ve configs klasöründeki kendi klasörüne kaydet (3. bölüm).");
+                guide_step(ui, 3, "Kural ekle: Varlık 1'e MeshId numarasını yaz, İşlem: Yerel dosya, Dosya: /Kilic/kilic.obj");
+                guide_step(ui, 4, "Roblox .obj dosyasını doğrudan okuyamaz; Hidoceptium dosyayı oyuna gönderirken Roblox'un model biçimine kendisi çevirir. Senin bir şey yapmana gerek yok.");
+                guide_tip(ui, "İpuçları: Modelin oranları orijinaline yakın olsun, çünkü oyun modeli parçanın boyutuna göre esnetir. Doku ayrı bir varlıktır: TextureID numarasına ayrı bir kural ekleyip .png dosyanı göster. Dosyalar 64 MB'tan küçük olmalı.");
+            });
+            guide_card(ui, w, Icon::File, t::BLUE(), "5. Doku ve ses", |ui| {
+                guide_text(ui, "Resimler için .png veya .jpg, sesler için .ogg veya .mp3 kullan. Kural aynıdır: varlık kimliği → Yerel dosya. Bir resmi tamamen gizlemek için İşlem olarak \"Kaldır\" seç; başka bir Roblox varlığıyla değiştirmek için \"Değiştir\" seçip onun numarasını yaz.");
+            });
+            guide_card(ui, w, Icon::Import, t::ACCENT(), "6. Hazır config kullanma", |ui| {
+                guide_text(ui, "Fleasion'dan veya arkadaşından gelen .json config'leri \"İçe aktar\" düğmesiyle ya da pencereye sürükleyip bırakarak ekleyebilirsin. Config'in yanında bir dosya klasörü varsa onu da configs klasörüne kopyala. Config'in yanındaki anahtar açıksa kuralları çalışır.");
+            });
+            guide_card(ui, w, Icon::Warning, t::DANGER(), "Sorun mu var?", |ui| {
+                guide_step(ui, 1, "Proxy çalışıyor mu? Üstte \"Çalışıyor\" yazmalı.");
+                guide_step(ui, 2, "Config'in ve kuralın anahtarı açık mı?");
+                guide_step(ui, 3, "Roblox'u kapatıp önbelleği temizledin mi?");
+                guide_step(ui, 4, "Alttaki Etkinlik panelini aç: değiştirilen her varlık orada görünür. Hiçbir şey görünmüyorsa varlık kimliği yanlış olabilir.");
+                guide_step(ui, 5, "Model bozuk veya görünmez ise .obj dosyasında yüz (face) ve doku koordinatı (UV) olduğundan emin ol; Etkinlik panelinde dönüştürme hatası yazar.");
+            });
+            ui.add_space(10.0);
+        });
+    }
+
     fn setting_row(ui: &mut Ui, width: f32, title: &str, detail: &str, first: bool, control: impl FnOnce(&mut Ui)) {
         if !first {
             let (r, _) = ui.allocate_exact_size(vec2(width - 32.0, 1.0), Sense::hover());
             ui.painter().rect_filled(r, CornerRadius::ZERO, alpha(t::LINE(), 0.7));
         }
+        let (title, detail) = (crate::i18n::t(title), crate::i18n::t(detail));
+        let (title, detail) = (title.as_ref(), detail.as_ref());
         let (rect, _) = ui.allocate_exact_size(vec2(width - 32.0, 64.0), Sense::hover());
         let ty = if detail.is_empty() { rect.center().y } else { rect.center().y - 9.0 };
         ui.painter().text(pos2(rect.left(), ty), Align2::LEFT_CENTER, title, t::semi(14.5), t::TEXT());
@@ -1015,7 +1104,7 @@ impl MainApp {
                     acts.push(Act::SetCdn(cdn));
                 }
             });
-            Self::setting_row(ui, w, "Certificate in Roblox", "Takes Interceptium's changes out of Roblox", false, |ui| {
+            Self::setting_row(ui, w, "Certificate in Roblox", concat!("Takes ", crate::brand_name!(), "'s changes out of Roblox"), false, |ui| {
                 if widgets::button(ui, "s-remove", "Remove", Some(Icon::Shield), Kind::Danger, 0.0, 38.0, self.busy == 0).clicked() {
                     acts.push(Act::RemoveFromRoblox);
                 }
@@ -1031,7 +1120,7 @@ impl MainApp {
             Self::setting_row(ui, w, "Version", "", true, |ui| {
                 widgets::label(ui, crate::VERSION, t::semi(14.0), t::MUTED());
             });
-            let loc = dir.as_ref().map(|d| d.to_string_lossy().into_owned()).unwrap_or_else(|| "Not installed with Interceptium Setup".into());
+            let loc = dir.as_ref().map(|d| d.to_string_lossy().into_owned()).unwrap_or_else(|| concat!("Not installed with ", crate::brand_name!(), " Setup").into());
             Self::setting_row(ui, w, "Location", &loc, false, |ui| {
                 if let Some(d) = &dir {
                     if widgets::icon_button(ui, "open-install", Icon::Folder, 36.0, t::TEXT(), "Open folder").clicked() {
@@ -1088,7 +1177,7 @@ impl MainApp {
                     if enter { Event::Ok } else { ev }
                 }
                 PopupKind::Confirm { title, message, ok, danger, .. } => popup::show(ctx, &p.shell, vis, 420.0, title, ok, if *danger { Kind::Danger } else { Kind::Primary }, |ui| {
-                    ui.add(egui::Label::new(egui::RichText::new(message.as_str()).font(t::regular(14.0)).color(t::MUTED())).wrap());
+                    ui.add(egui::Label::new(egui::RichText::new(crate::i18n::t(message.as_str())).font(t::regular(14.0)).color(t::MUTED())).wrap());
                 }),
                 PopupKind::Rule(ed) => {
                     let title = if ed.path.is_some() { "Edit rule" } else { "New rule" };
@@ -1234,13 +1323,13 @@ fn rule_card(ui: &mut Ui, path: &Path_, rule: &Map<String, Value>, depth: usize,
     }
     let mode = rule_mode(rule);
     let chip_text = mode_label(mode);
-    let chip_galley = ui.painter().layout_no_wrap(chip_text.to_string(), t::medium(12.0), mode_color(mode));
+    let chip_galley = ui.painter().layout_no_wrap(crate::i18n::t(chip_text).into_owned(), t::medium(12.0), mode_color(mode));
     let icons_w = 80.0 * hover;
     let chip_rect = Rect::from_center_size(pos2(rect.right() - 18.0 - icons_w - (chip_galley.size().x + 20.0) / 2.0, rect.center().y), vec2(chip_galley.size().x + 20.0, 24.0));
     ui.painter().rect_filled(chip_rect, CornerRadius::same(12), alpha(mode_color(mode), 0.13 + 0.05 * on));
     ui.painter().galley(chip_rect.center() - chip_galley.size() / 2.0, chip_galley, mode_color(mode).gamma_multiply(0.55 + 0.45 * on));
     let detail = if mode == "cdn" && !CDN_ON.load(std::sync::atomic::Ordering::Relaxed) {
-        "Off in Settings".to_string()
+        crate::i18n::t("Off in Settings").into_owned()
     } else {
         rules::describe(rule)
     };
@@ -1291,6 +1380,49 @@ fn empty_state(ui: &mut Ui, title: &str, button: Option<&str>, acts: &mut Vec<Ac
     });
 }
 
+fn guide_card(ui: &mut Ui, width: f32, icon: Icon, color: Color32, title: &str, body: impl FnOnce(&mut Ui)) {
+    widgets::card().inner_margin(egui::Margin::same(20)).show(ui, |ui| {
+        ui.set_width(width - 40.0);
+        ui.spacing_mut().item_spacing.y = 10.0;
+        ui.horizontal(|ui| {
+            let (r, _) = ui.allocate_exact_size(vec2(36.0, 36.0), Sense::hover());
+            ui.painter().circle_filled(r.center(), 18.0, alpha(color, 0.14));
+            icons::draw(ui.painter(), icon, r.center(), 18.0, color);
+            ui.add_space(4.0);
+            widgets::label(ui, title, t::semi(17.0), t::TEXT());
+        });
+        body(ui);
+    });
+}
+
+fn guide_text(ui: &mut Ui, text: &str) {
+    ui.add(egui::Label::new(egui::RichText::new(text).font(t::regular(14.0)).color(t::MUTED())).wrap().selectable(true));
+}
+
+fn guide_tip(ui: &mut Ui, text: &str) {
+    egui::Frame::new().fill(alpha(t::WARN(), 0.10)).corner_radius(CornerRadius::same(12)).inner_margin(egui::Margin::same(12)).show(ui, |ui| {
+        ui.set_width(ui.available_width());
+        ui.add(egui::Label::new(egui::RichText::new(text).font(t::regular(13.5)).color(t::TEXT())).wrap().selectable(true));
+    });
+}
+
+fn guide_step(ui: &mut Ui, n: usize, text: &str) {
+    ui.horizontal_top(|ui| {
+        let (r, _) = ui.allocate_exact_size(vec2(26.0, 26.0), Sense::hover());
+        ui.painter().circle_filled(r.center(), 13.0, t::ACCENT());
+        ui.painter().text(r.center(), Align2::CENTER_CENTER, n.to_string(), t::semi(13.0), t::ACCENT_TEXT());
+        ui.add_space(4.0);
+        ui.add(egui::Label::new(egui::RichText::new(text).font(t::regular(14.0)).color(t::TEXT())).wrap().selectable(true));
+    });
+}
+
+fn guide_code(ui: &mut Ui, text: &str) {
+    egui::Frame::new().fill(t::FIELD()).stroke(Stroke::new(1.0, alpha(t::LINE(), 0.8))).corner_radius(CornerRadius::same(10)).inner_margin(egui::Margin::symmetric(14, 10)).show(ui, |ui| {
+        ui.set_width(ui.available_width());
+        ui.add(egui::Label::new(egui::RichText::new(text).font(t::mono(13.0)).color(t::TEXT())).wrap().selectable(true));
+    });
+}
+
 fn rule_editor(ui: &mut Ui, shell_id: u64, ed: &mut RuleEditor, ctl: &Arc<Controller>) {
     let w = 500.0;
     widgets::label(ui, "Name", t::semi(12.5), t::MUTED());
@@ -1313,7 +1445,7 @@ fn rule_editor(ui: &mut Ui, shell_id: u64, ed: &mut RuleEditor, ctl: &Arc<Contro
         rc.multiply_opacity(grow);
         let label = format!("Asset {}", index + 1);
         let lr = rc.allocate_exact_size(vec2(64.0, 40.0), Sense::hover()).0;
-        rc.painter().text(pos2(lr.left(), lr.center().y), Align2::LEFT_CENTER, label, t::semi(12.5), t::FAINT());
+        rc.painter().text(pos2(lr.left(), lr.center().y), Align2::LEFT_CENTER, crate::i18n::t(&label), t::semi(12.5), t::FAINT());
         let field_w = if count > 1 { w - 64.0 - 46.0 } else { w - 64.0 - 2.0 };
         widgets::text_field(&mut rc, ("asset", shell_id, *aid), value, "Asset ID or type, like Image", field_w);
         if count > 1 {
@@ -1348,7 +1480,7 @@ fn rule_editor(ui: &mut Ui, shell_id: u64, ed: &mut RuleEditor, ctl: &Arc<Contro
             if local {
                 widgets::text_field(ui, ("rule-value", shell_id), &mut ed.value, "Path to a file", w - 110.0);
                 if widgets::button(ui, ("browse", shell_id), "Browse", Some(Icon::File), Kind::Ghost, 102.0, 40.0, true).clicked() {
-                    let mut dlg = rfd::FileDialog::new().set_title("Choose file");
+                    let mut dlg = rfd::FileDialog::new().set_title(crate::i18n::t("Choose file"));
                     if let Ok(dir) = std::fs::canonicalize(&ctl.config.folder) {
                         dlg = dlg.set_directory(dir);
                     }
@@ -1362,6 +1494,9 @@ fn rule_editor(ui: &mut Ui, shell_id: u64, ed: &mut RuleEditor, ctl: &Arc<Contro
                 widgets::text_field(ui, ("rule-value", shell_id), &mut ed.value, "Asset ID", w);
             }
         });
+    }
+    if ed.mode == 2 && crate::mesh::is_obj(&ed.value) {
+        widgets::label(ui, ".obj files are converted to Roblox meshes automatically.", t::regular(12.5), t::ACCENT());
     }
     if ed.mode == 3 && !ctl.config.settings().cdn_mode {
         ui.horizontal(|ui| {
@@ -1410,6 +1545,10 @@ impl eframe::App for MainApp {
         CDN_ON.store(self.ctl.config.settings().cdn_mode, std::sync::atomic::Ordering::Relaxed);
         let rect = ui.max_rect();
         ui.painter().rect_filled(rect, CornerRadius::same(super::chrome::window_radius(&ctx)), t::BG());
+        if crate::brand::HIDO {
+            super::art::ocean(&ui.painter().with_clip_rect(rect), rect, ctx.input(|i| i.time) as f32);
+            ctx.request_repaint();
+        }
         // the top strip moves the window; page buttons drawn later stay clickable
         super::chrome::drag_area(ui, Rect::from_min_size(rect.min, vec2(rect.width(), 22.0 + 46.0 + 6.0)), true);
         let mut acts = Vec::new();
@@ -1433,7 +1572,11 @@ impl eframe::App for MainApp {
                 c.disable();
             }
             let r = c.max_rect();
-            self.settings_page(&mut c, r, &mut acts);
+            if self.guide {
+                self.guide_page(&mut c, r, &mut acts);
+            } else {
+                self.settings_page(&mut c, r, &mut acts);
+            }
         }
         let buttons = Rect::from_min_max(pos2(rect.right() - 22.0 - WINDOW_BUTTONS_W, rect.top() + 22.0), pos2(rect.right() - 22.0, rect.top() + 22.0 + 46.0));
         let mut wc = ui.new_child(UiBuilder::new().max_rect(buttons).layout(egui::Layout::right_to_left(egui::Align::Center)));
@@ -1485,6 +1628,10 @@ impl MainApp {
             ed.assets = vec![(0, "1012345678".into())];
             ed.value = "https://cdn.example.com/skybox/night.png".into();
         }
+    }
+    pub fn shot_guide(&mut self) {
+        self.settings_open = true;
+        self.guide = true;
     }
     pub fn shot_light(&mut self) {
         self.appearance = 1;

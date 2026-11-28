@@ -1,6 +1,7 @@
 //! The desktop window (egui).
 
 pub mod anim;
+pub mod art;
 pub mod chrome;
 pub mod icons;
 pub mod main_window;
@@ -12,8 +13,14 @@ pub mod widgets;
 
 use std::sync::Arc;
 
+#[cfg(not(feature = "hido"))]
 pub const LOGO_PNG: &[u8] = include_bytes!("../../assets/logo.png");
+#[cfg(not(feature = "hido"))]
 pub const ICON_PNG: &[u8] = include_bytes!("../../assets/logo_96.png");
+#[cfg(feature = "hido")]
+pub const LOGO_PNG: &[u8] = include_bytes!("../../assets/hido/logo.png");
+#[cfg(feature = "hido")]
+pub const ICON_PNG: &[u8] = include_bytes!("../../assets/hido/logo_96.png");
 
 /// Follow the chosen appearance ("dark", "light" or "system"), cross-fading on changes.
 pub fn update_appearance(ctx: &egui::Context, choice: &str) {
@@ -55,8 +62,8 @@ pub fn window_icon() -> egui::IconData {
 pub fn native_options(size: [f32; 2], min: [f32; 2], resizable: bool, renderer: eframe::Renderer) -> eframe::NativeOptions {
     eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_title("Interceptium")
-            .with_app_id("interceptium")
+            .with_title(concat!(crate::brand_name!()))
+            .with_app_id(concat!(crate::brand_lower!()))
             .with_inner_size(size)
             .with_min_inner_size(min)
             .with_resizable(resizable)
@@ -75,14 +82,14 @@ pub fn run_window(size: [f32; 2], min: [f32; 2], resizable: bool, make: impl Fn(
     let order = if forced_gl { vec![eframe::Renderer::Glow] } else { vec![eframe::Renderer::Wgpu, eframe::Renderer::Glow] };
     let mut last = String::new();
     for renderer in order {
-        let result = eframe::run_native("Interceptium", native_options(size, min, resizable, renderer), Box::new(|cc| Ok(make(cc))));
+        let result = eframe::run_native(concat!(crate::brand_name!()), native_options(size, min, resizable, renderer), Box::new(|cc| Ok(make(cc))));
         match result {
             Ok(()) => return 0,
             Err(e) => last = e.to_string(),
         }
     }
     crate::log!("Window", "could not open a window: {last}");
-    eprintln!("Interceptium could not open a window: {last}");
+    eprintln!(concat!(crate::brand_name!(), " could not open a window: {last}"), last = last);
     1
 }
 
@@ -90,7 +97,7 @@ pub fn run() -> i32 {
     let ctl = match crate::app::Controller::new() {
         Ok(c) => c,
         Err(e) => {
-            eprintln!("Interceptium could not start: {e}");
+            eprintln!(concat!(crate::brand_name!(), " could not start: {e}"), e = e);
             return 1;
         }
     };

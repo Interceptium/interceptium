@@ -32,6 +32,7 @@ macro_rules! palette {
     };
 }
 
+#[cfg(not(feature = "hido"))]
 palette! {
     BG = 0x0b0d13, 0xf3f5f9;
     SURFACE = 0x11141c, 0xffffff;
@@ -54,6 +55,32 @@ palette! {
     CHIP = 0x212736, 0xedf0f5;
     GHOST = 0x1e2330, 0xeceff4;
     GHOST_HOVER = 0x272d3d, 0xe1e6ee;
+}
+
+// Hidoceptium: deep sea, golden sand and sky (a Blox Fruits-style palette).
+#[cfg(feature = "hido")]
+palette! {
+    BG = 0x061726, 0xe8f5fc;
+    SURFACE = 0x0a2034, 0xffffff;
+    CARD = 0x0d2840, 0xffffff;
+    CARD_HOVER = 0x123555, 0xeef7fd;
+    CARD_SELECTED = 0x1a3a46, 0xfff3dc;
+    FIELD = 0x071a2b, 0xe9f2f8;
+    LINE = 0x1d4263, 0xcfe0ec;
+    TEXT = 0xf2f7fb, 0x0c1d2c;
+    MUTED = 0x93acc2, 0x4f667a;
+    FAINT = 0x5f7d96, 0x8499ab;
+    ACCENT = 0xffb534, 0xe48f00;
+    ACCENT_HOVER = 0xffc65e, 0xf29c0a;
+    ACCENT_PRESS = 0xe89c1d, 0xc97c00;
+    ACCENT_TEXT = 0x2a1600, 0x2a1600;
+    DANGER = 0xff5f6d, 0xd93a4a;
+    WARN = 0xb98cff, 0x7a4fd6;
+    BLUE = 0x4cc6ff, 0x1d86c9;
+    TRACK_OFF = 0x24486a, 0xc4d5e2;
+    CHIP = 0x15334f, 0xe6f0f7;
+    GHOST = 0x123150, 0xe5eff6;
+    GHOST_HOVER = 0x1a3f63, 0xd8e7f1;
 }
 
 /// A shadow colour: full strength on dark, much softer on light backgrounds.

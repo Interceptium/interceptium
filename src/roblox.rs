@@ -14,8 +14,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-pub const BEGIN_MARK: &str = "# >>> Interceptium local CA (safe to delete) >>>";
-pub const END_MARK: &str = "# <<< Interceptium local CA <<<";
+pub const BEGIN_MARK: &str = concat!("# >>> ", crate::brand_name!(), " local CA (safe to delete) >>>");
+pub const END_MARK: &str = concat!("# <<< ", crate::brand_name!(), " local CA <<<");
 pub const CA_FLAG: &str = "DFFlagHttpUseEmbeddedCaCerts";
 pub const PLAYER_EXE: &str = if cfg!(windows) { "RobloxPlayerBeta.exe" } else { "RobloxPlayer" };
 
@@ -355,7 +355,7 @@ impl LaunchWatcher {
         self.stop.store(false, Ordering::SeqCst);
         let me = self.clone();
         std::thread::Builder::new()
-            .name("interceptium-watch".into())
+            .name(concat!(crate::brand_lower!(), "-watch").into())
             .spawn(move || {
                 while !me.stop.load(Ordering::SeqCst) {
                     for _ in 0..10 {

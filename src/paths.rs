@@ -24,14 +24,14 @@ pub fn data_dir_path() -> PathBuf {
     if let Some(o) = std::env::var_os("INTERCEPTIUM_HOME") {
         PathBuf::from(o)
     } else if cfg!(windows) {
-        local_appdata().join("Interceptium")
+        local_appdata().join(concat!(crate::brand_name!()))
     } else if cfg!(target_os = "macos") {
-        home().join("Library").join("Application Support").join("Interceptium")
+        home().join("Library").join("Application Support").join(concat!(crate::brand_name!()))
     } else {
         std::env::var_os("XDG_DATA_HOME")
             .map(PathBuf::from)
             .unwrap_or_else(|| home().join(".local").join("share"))
-            .join("interceptium")
+            .join(concat!(crate::brand_lower!()))
     }
 }
 

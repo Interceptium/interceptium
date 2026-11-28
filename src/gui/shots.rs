@@ -37,6 +37,7 @@ pub fn drive(app: &mut MainApp, ctx: &egui::Context) {
                 "log" => app.shot_log(),
                 "run" => app.shot_start(ctx),
                 "light" => app.shot_light(),
+                "guide" => app.shot_guide(),
                 "cdnwarn" => app.shot_cdn_warning(ctx),
                 "cdnrule" => app.shot_cdn_rule(ctx),
                 _ => {}

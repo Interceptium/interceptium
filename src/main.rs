@@ -2,11 +2,14 @@
 //! Interceptium: a local proxy that swaps Roblox assets using Fleasion-compatible configs.
 //! The same program is the app and, on Windows, its own setup and uninstaller.
 
+mod brand;
 mod app;
 mod certs;
 mod config;
 mod gui;
 mod http1;
+mod i18n;
+mod mesh;
 #[macro_use]
 mod logbus;
 mod paths;
@@ -19,12 +22,16 @@ mod setup;
 mod winsys;
 mod e2e_tests;
 
-pub const APP_NAME: &str = "Interceptium";
-pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+pub const APP_NAME: &str = concat!(crate::brand_name!());
+pub const VERSION: &str = brand::VERSION;
 
-const HELP: &str = "Interceptium
+const HELP: &str = concat!(
+    crate::brand_name!(),
+    "
 
-Usage: Interceptium [options]
+Usage: ",
+    crate::brand_name!(),
+    " [options]
 
   (no options)      open the window
   --headless        run the proxy without a window (Ctrl+C to stop)
@@ -32,15 +39,20 @@ Usage: Interceptium [options]
   --launch          with --headless: also launch Roblox
   --clear-cache     delete the Roblox asset cache and exit
   --remove-from-roblox
-                    take Interceptium's certificate out of Roblox and exit
+                    take ",
+    crate::brand_name!(),
+    "'s certificate out of Roblox and exit
   --version         print the version
 
 Windows setup options:
   --install, --maintenance, --repair, --reinstall, --uninstall
   --quiet           no window; with --log FILE to record progress
-  --dir FOLDER      install folder (default %LOCALAPPDATA%\\Programs\\Interceptium)
+  --dir FOLDER      install folder (default %LOCALAPPDATA%\\Programs\\",
+    crate::brand_name!(),
+    ")
   --no-desktop, --no-start-menu, --remove-data, --launch
-";
+"
+);
 
 fn headless(port: Option<u16>, launch: bool) -> i32 {
     crate::logbus::subscribe(|line| println!("{line}"));

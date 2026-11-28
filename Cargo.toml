@@ -1,6 +1,6 @@
 [package]
 name = "interceptium"
-version = "1.0.1"
+version = "1.0.2"
 edition = "2021"
 rust-version = "1.85"
 description = "Local Roblox asset proxy"
@@ -46,6 +46,8 @@ winresource = "0.1"
 [features]
 # Test builds only: scripted screenshots and frame timings.
 shots = []
+# The Hidoceptium edition: own name, install, settings, Turkish interface and art.
+hido = []
 
 [dev-dependencies]
 

@@ -30,6 +30,8 @@ pub fn shadow(p: &egui::Painter, rect: Rect, radius: u8, blur: f32, y: f32, colo
 
 /// A raised panel: shadow, fill, hairline border and a faint top highlight.
 pub fn panel(p: &egui::Painter, rect: Rect, radius: u8, fill: Color32) {
+    // Hidoceptium: slightly see-through, so the sea behind shows softly
+    let fill = if crate::brand::HIDO { alpha(fill, 0.86) } else { fill };
     shadow(p, rect, radius, 32.0, 10.0, t::shade(0.38));
     p.rect_filled(rect, CornerRadius::same(radius), fill);
     p.rect_stroke(rect, CornerRadius::same(radius), Stroke::new(1.0, alpha(t::LINE(), 0.65)), StrokeKind::Inside);
@@ -42,6 +44,7 @@ pub fn button(ui: &mut Ui, id: impl std::hash::Hash + std::fmt::Debug, text: &st
     let font = t::medium(14.0);
     let fade = if enabled { 1.0 } else { 0.45 };
     let text_color = colors(kind).3.gamma_multiply(fade);
+    let text = crate::i18n::t(text);
     let galley = ui.painter().layout_no_wrap(text.to_string(), font, text_color);
     let icon_w = if icon.is_some() { 22.0 } else { 0.0 };
     let w = if width > 0.0 { width } else { galley.size().x + icon_w + 36.0 };
@@ -81,7 +84,7 @@ pub fn icon_button(ui: &mut Ui, id: impl std::hash::Hash + std::fmt::Debug, icon
         icons::draw(ui.painter(), icon, rect.center(), size * 0.5, mix(t::MUTED(), color, 0.35 + 0.65 * hover));
     }
     let resp = resp.on_hover_cursor(egui::CursorIcon::PointingHand);
-    if tip.is_empty() { resp } else { resp.on_hover_text(tip) }
+    if tip.is_empty() { resp } else { resp.on_hover_text(crate::i18n::t(tip)) }
 }
 
 /// An iOS-style switch. Returns a response that is `changed()` when flipped.
@@ -124,7 +127,7 @@ pub fn text_field(ui: &mut Ui, id: impl std::hash::Hash + std::fmt::Debug, text:
     let resp = child.add(
         egui::TextEdit::singleline(text)
             .id(edit_id)
-            .hint_text(egui::RichText::new(hint).color(t::FAINT()))
+            .hint_text(egui::RichText::new(crate::i18n::t(hint)).color(t::FAINT()))
             .font(t::regular(14.0))
             .text_color(t::TEXT())
             .frame(egui::Frame::NONE)
@@ -157,7 +160,7 @@ pub fn segmented(ui: &mut Ui, id: impl std::hash::Hash + std::fmt::Debug, labels
         let near = (1.0 - (pos - i as f32).abs()).clamp(0.0, 1.0);
         let hover = tween_bool(ui.ctx(), id.with(("h", i)), resp.hovered(), 0.12);
         let color = mix(mix(t::MUTED(), t::TEXT(), hover * 0.6), t::TEXT(), near);
-        ui.painter().text(r.center(), Align2::CENTER_CENTER, *label, t::medium(13.5), color);
+        ui.painter().text(r.center(), Align2::CENTER_CENTER, crate::i18n::t(label), t::medium(13.5), color);
     }
     changed
 }
@@ -171,6 +174,8 @@ pub enum Status {
 
 pub fn status_pill(ui: &mut Ui, status: Status, text: &str) {
     let font = t::semi(12.5);
+    let text = crate::i18n::t(text);
+    let text = text.as_ref();
     let width = ui.painter().layout_no_wrap(text.to_string(), font.clone(), t::TEXT()).size().x;
     let size = vec2(width + 40.0, 30.0);
     let (rect, _) = ui.allocate_exact_size(size, Sense::hover());
@@ -263,7 +268,7 @@ pub fn progress_bar(ui: &mut Ui, id: impl std::hash::Hash + std::fmt::Debug, val
 /// A rounded card: fill, padding and a hairline border.
 pub fn card() -> egui::Frame {
     egui::Frame::new()
-        .fill(t::CARD())
+        .fill(if crate::brand::HIDO { alpha(t::CARD(), 0.9) } else { t::CARD() })
         .corner_radius(CornerRadius::same(18))
         .stroke(Stroke::new(1.0, alpha(t::LINE(), 0.65)))
         .shadow(egui::Shadow { offset: [0, 10], blur: 30, spread: 0, color: t::shade(0.36) })
@@ -271,7 +276,7 @@ pub fn card() -> egui::Frame {
 }
 
 pub fn label(ui: &mut Ui, text: &str, font: egui::FontId, color: Color32) -> Response {
-    ui.add(egui::Label::new(egui::RichText::new(text).font(font).color(color)).selectable(false))
+    ui.add(egui::Label::new(egui::RichText::new(crate::i18n::t(text)).font(font).color(color)).selectable(false))
 }
 
 /// Shorten `text` with an ellipsis so it fits `width` points.

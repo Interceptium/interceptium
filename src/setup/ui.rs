@@ -22,20 +22,20 @@ enum Work {
 impl Work {
     fn doing(self) -> &'static str {
         match self {
-            Work::Install => "Installing Interceptium",
-            Work::Repair => "Repairing Interceptium",
-            Work::Reinstall => "Reinstalling Interceptium",
-            Work::Uninstall => "Uninstalling Interceptium",
-            Work::Update => "Updating Interceptium",
+            Work::Install => concat!("Installing ", crate::brand_name!()),
+            Work::Repair => concat!("Repairing ", crate::brand_name!()),
+            Work::Reinstall => concat!("Reinstalling ", crate::brand_name!()),
+            Work::Uninstall => concat!("Uninstalling ", crate::brand_name!()),
+            Work::Update => concat!("Updating ", crate::brand_name!()),
         }
     }
     fn done(self) -> &'static str {
         match self {
-            Work::Install => "Interceptium is installed",
-            Work::Repair => "Interceptium is repaired",
-            Work::Reinstall => "Interceptium is reinstalled",
-            Work::Uninstall => "Interceptium is uninstalled",
-            Work::Update => "Interceptium is updated",
+            Work::Install => concat!(crate::brand_name!(), " is installed"),
+            Work::Repair => concat!(crate::brand_name!(), " is repaired"),
+            Work::Reinstall => concat!(crate::brand_name!(), " is reinstalled"),
+            Work::Uninstall => concat!(crate::brand_name!(), " is uninstalled"),
+            Work::Update => concat!(crate::brand_name!(), " is updated"),
         }
     }
 }
@@ -105,7 +105,7 @@ impl SetupApp {
             Some(Action::Repair) if app.installed.is_some() => app.start(&ctx, Work::Repair),
             Some(Action::Reinstall) if app.installed.is_some() => app.start(&ctx, Work::Reinstall),
             Some(Action::Uninstall) if app.installed.is_some() => app.show(&ctx, View::Uninstall),
-            Some(Action::Repair | Action::Reinstall | Action::Uninstall) => app.show(&ctx, View::Error("Interceptium is not installed.".into())),
+            Some(Action::Repair | Action::Reinstall | Action::Uninstall) => app.show(&ctx, View::Error(concat!(crate::brand_name!(), " is not installed.").into())),
             Some(Action::Install) => app.show(&ctx, View::Install),
             _ => {
                 let v = app.home_view();
@@ -163,7 +163,7 @@ impl SetupApp {
                 Work::Reinstall => installer.reinstall(&report).map(|m| PathBuf::from(m.directory)),
                 Work::Uninstall => match installed_dir {
                     Some(d) => installer.uninstall(&d, remove_data, &report).map(|_| d),
-                    None => Err("Interceptium is not installed.".into()),
+                    None => Err(concat!(crate::brand_name!(), " is not installed.").into()),
                 },
             };
             let _ = tx.send(r);
@@ -173,6 +173,8 @@ impl SetupApp {
     }
 
     fn title(ui: &mut Ui, title: &str, sub: &str) {
+        let (title, sub) = (crate::i18n::t(title), crate::i18n::t(sub));
+        let (title, sub) = (title.as_ref(), sub.as_ref());
         widgets::label(ui, title, t::semi(25.0), t::TEXT());
         if !sub.is_empty() {
             ui.add_space(2.0);
@@ -181,6 +183,8 @@ impl SetupApp {
     }
 
     fn toggle_row(ui: &mut Ui, id: &str, text: &str, value: &mut bool, width: f32) {
+        let text = crate::i18n::t(text);
+        let text = text.as_ref();
         let (rect, resp) = ui.allocate_exact_size(vec2(width, 48.0), Sense::click());
         ui.painter().text(pos2(rect.left(), rect.center().y), Align2::LEFT_CENTER, text, t::semi(14.0), t::TEXT());
         let tr = Rect::from_center_size(pos2(rect.right() - 20.0, rect.center().y), vec2(40.0, 22.0));
@@ -193,14 +197,14 @@ impl SetupApp {
 
     fn view_install(&mut self, ui: &mut Ui, ctx: &egui::Context) {
         let w = ui.available_width();
-        Self::title(ui, "Install Interceptium", &format!("Version {}", crate::VERSION));
+        Self::title(ui, concat!("Install ", crate::brand_name!()), &format!("Version {}", crate::VERSION));
         ui.add_space(22.0);
         widgets::label(ui, "Location", t::semi(12.5), t::MUTED());
         ui.horizontal(|ui| {
             widgets::text_field(ui, "dir", &mut self.dir_text, "Folder", w - 118.0);
             if widgets::button(ui, "browse", "Browse", Some(Icon::Folder), Kind::Ghost, 110.0, 40.0, true).clicked() {
-                if let Some(p) = rfd::FileDialog::new().set_title("Install location").pick_folder() {
-                    self.dir_text = p.join("Interceptium").to_string_lossy().into_owned();
+                if let Some(p) = rfd::FileDialog::new().set_title(crate::i18n::t("Install location")).pick_folder() {
+                    self.dir_text = p.join(concat!(crate::brand_name!())).to_string_lossy().into_owned();
                 }
             }
         });
@@ -233,6 +237,8 @@ impl SetupApp {
     }
 
     fn option_card(ui: &mut Ui, id: &str, icon: Icon, title: &str, detail: &str, color: Color32, width: f32) -> bool {
+        let (title, detail) = (crate::i18n::t(title), crate::i18n::t(detail));
+        let (title, detail) = (title.as_ref(), detail.as_ref());
         let (rect, resp) = ui.allocate_exact_size(vec2(width, 74.0), Sense::click());
         let id = Id::unique(id);
         let hover = tween_bool(ui.ctx(), id.with("h"), resp.hovered(), 0.15);
@@ -254,7 +260,7 @@ impl SetupApp {
     fn view_maintenance(&mut self, ui: &mut Ui, ctx: &egui::Context) {
         let w = ui.available_width();
         let (version, dir) = self.installed.as_ref().map(|m| (m.version.clone(), m.directory.clone())).unwrap_or_default();
-        Self::title(ui, "Interceptium is installed", &format!("Version {version}  ·  {dir}"));
+        Self::title(ui, concat!(crate::brand_name!(), " is installed"), &format!("Version {version}  ·  {dir}"));
         if compare_versions(&version, crate::VERSION) == std::cmp::Ordering::Greater {
             ui.add_space(8.0);
             ui.horizontal(|ui| {
@@ -271,7 +277,7 @@ impl SetupApp {
         if Self::option_card(ui, "reinstall", Icon::Refresh, "Reinstall", "Remove and install again; configs are kept", t::BLUE(), w) {
             self.start(ctx, Work::Reinstall);
         }
-        if Self::option_card(ui, "uninstall", Icon::Trash, "Uninstall", "Remove Interceptium from this PC", t::DANGER(), w) {
+        if Self::option_card(ui, "uninstall", Icon::Trash, "Uninstall", concat!("Remove ", crate::brand_name!(), " from this PC"), t::DANGER(), w) {
             self.show(ctx, View::Uninstall);
         }
         footer(ui, |ui| {
@@ -284,7 +290,7 @@ impl SetupApp {
     fn view_update(&mut self, ui: &mut Ui, ctx: &egui::Context) {
         let w = ui.available_width();
         let (old, dir) = self.installed.as_ref().map(|m| (m.version.clone(), m.directory.clone())).unwrap_or_default();
-        Self::title(ui, "Update Interceptium", &format!("Version {old}  \u{2192}  {}", crate::VERSION));
+        Self::title(ui, concat!("Update ", crate::brand_name!()), &format!("Version {old}  \u{2192}  {}", crate::VERSION));
         ui.add_space(22.0);
         widgets::card().inner_margin(egui::Margin::symmetric(18, 6)).show(ui, |ui| {
             ui.set_width(w - 36.0);
@@ -304,8 +310,8 @@ impl SetupApp {
                 let c = pos2(r.left() + 16.0, r.center().y);
                 ui.painter().circle_filled(c, 15.0, alpha(t::ACCENT(), 0.12));
                 icons::draw(ui.painter(), icon, c, 15.0, t::ACCENT());
-                ui.painter().text(pos2(r.left() + 44.0, r.center().y - 9.0), Align2::LEFT_CENTER, title, t::semi(14.0), t::TEXT());
-                let d = widgets::elide(ui, detail, &t::regular(12.5), r.width() - 60.0);
+                ui.painter().text(pos2(r.left() + 44.0, r.center().y - 9.0), Align2::LEFT_CENTER, crate::i18n::t(title), t::semi(14.0), t::TEXT());
+                let d = widgets::elide(ui, &crate::i18n::t(detail), &t::regular(12.5), r.width() - 60.0);
                 ui.painter().text(pos2(r.left() + 44.0, r.center().y + 10.0), Align2::LEFT_CENTER, d, t::regular(12.5), t::MUTED());
             }
         });
@@ -321,7 +327,7 @@ impl SetupApp {
 
     fn view_uninstall(&mut self, ui: &mut Ui, ctx: &egui::Context) {
         let w = ui.available_width();
-        Self::title(ui, "Uninstall Interceptium", "Interceptium, its shortcuts and its changes to Roblox will be removed.");
+        Self::title(ui, concat!("Uninstall ", crate::brand_name!()), concat!(crate::brand_name!(), ", its shortcuts and its changes to Roblox will be removed."));
         ui.add_space(22.0);
         widgets::card().inner_margin(egui::Margin::symmetric(18, 4)).show(ui, |ui| {
             ui.set_width(w - 36.0);
@@ -385,7 +391,7 @@ impl SetupApp {
         });
         footer(ui, |ui| {
             if work != Work::Uninstall {
-                if widgets::button(ui, "open", "Open Interceptium", Some(Icon::Play), Kind::Primary, 0.0, 44.0, true).clicked() {
+                if widgets::button(ui, "open", concat!("Open ", crate::brand_name!()), Some(Icon::Play), Kind::Primary, 0.0, 44.0, true).clicked() {
                     super::launch_app(&dir);
                     ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                 }
@@ -457,12 +463,16 @@ impl eframe::App for SetupApp {
         crate::gui::update_appearance(&ctx, &self.appearance);
         let rect = ui.max_rect();
         ui.painter().rect_filled(rect, CornerRadius::same(crate::gui::chrome::window_radius(&ctx)), t::BG());
+        if crate::brand::HIDO {
+            crate::gui::art::ocean(&ui.painter().with_clip_rect(rect), rect, ctx.input(|i| i.time) as f32);
+            ctx.request_repaint();
+        }
         crate::gui::chrome::drag_area(ui, Rect::from_min_size(rect.min, vec2(rect.width(), 76.0)), false);
         // header
         let head = Rect::from_min_size(rect.min + vec2(28.0, 22.0), vec2(rect.width() - 56.0, 36.0));
         ui.painter().image(self.logo.id(), Rect::from_center_size(pos2(head.left() + 17.0, head.center().y), vec2(34.0, 34.0)), Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
-        ui.painter().text(pos2(head.left() + 44.0, head.center().y), Align2::LEFT_CENTER, if self.is_update() { "Interceptium Update" } else { "Interceptium Setup" }, t::semi(16.0), t::TEXT());
-        ui.painter().text(pos2(head.right() - 84.0, head.center().y), Align2::RIGHT_CENTER, format!("Version {}", crate::VERSION), t::regular(12.5), t::FAINT());
+        ui.painter().text(pos2(head.left() + 44.0, head.center().y), Align2::LEFT_CENTER, crate::i18n::t(if self.is_update() { concat!(crate::brand_name!(), " Update") } else { concat!(crate::brand_name!(), " Setup") }), t::semi(16.0), t::TEXT());
+        ui.painter().text(pos2(head.right() - 84.0, head.center().y), Align2::RIGHT_CENTER, crate::i18n::t(&format!("Version {}", crate::VERSION)), t::regular(12.5), t::FAINT());
         let buttons = Rect::from_min_max(pos2(head.right() - 76.0, head.top()), pos2(head.right() + 6.0, head.bottom()));
         let mut wc = ui.new_child(UiBuilder::new().max_rect(buttons).layout(egui::Layout::right_to_left(egui::Align::Center)));
         crate::gui::chrome::window_buttons(&mut wc, false);
@@ -497,7 +507,7 @@ impl eframe::App for SetupApp {
                         View::Maintenance
                     }
                     "progress" => {
-                        *self.progress.lock().unwrap() = (0.62, "Copying Interceptium".into());
+                        *self.progress.lock().unwrap() = (0.62, concat!("Copying ", crate::brand_name!()).into());
                         View::Progress(Work::Install)
                     }
                     "done" => View::Done(Work::Install, PathBuf::from(self.dir_text.clone())),
@@ -505,7 +515,7 @@ impl eframe::App for SetupApp {
                         self.installed = Some(super::core::Manifest { version: "1.0.0".into(), directory: self.dir_text.clone(), files: vec![], shortcuts: vec![], desktop_shortcut: true, start_menu_shortcut: true });
                         View::Update
                     }
-                    "error" => View::Error("Can't write to C:\\Program Files\\Interceptium. Choose another folder.".into()),
+                    "error" => View::Error(concat!("Can't write to C:\\Program Files\\", crate::brand_name!(), ". Choose another folder.").into()),
                     "uninstall" => View::Uninstall,
                     _ => View::Install,
                 };

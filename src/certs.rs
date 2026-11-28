@@ -15,7 +15,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-pub const CA_COMMON_NAME: &str = "Interceptium Local CA";
+pub const CA_COMMON_NAME: &str = concat!(crate::brand_name!(), " Local CA");
 pub const PERMITTED_DOMAINS: [&str; 2] = ["roblox.com", "rbxcdn.com"];
 
 struct Ca {
@@ -112,8 +112,8 @@ fn days_left(der: &[u8]) -> Option<i64> {
 impl CertAuthority {
     pub fn open(directory: &Path) -> Result<CertAuthority, String> {
         let _ = std::fs::create_dir_all(directory);
-        let cert_path = directory.join("interceptium-ca.pem");
-        let key_path = directory.join("interceptium-ca.key");
+        let cert_path = directory.join(concat!(crate::brand_lower!(), "-ca.pem"));
+        let key_path = directory.join(concat!(crate::brand_lower!(), "-ca.key"));
         let ca = match load(&cert_path, &key_path) {
             Some(ca) => ca,
             None => create(&cert_path, &key_path)?,
@@ -181,7 +181,7 @@ fn create(cert_path: &Path, key_path: &Path) -> Result<Ca, String> {
     let mut params = CertificateParams::new(Vec::<String>::new()).map_err(|e| e.to_string())?;
     let mut dn = DistinguishedName::new();
     dn.push(DnType::CommonName, CA_COMMON_NAME);
-    dn.push(DnType::OrganizationName, "Interceptium (this computer only)");
+    dn.push(DnType::OrganizationName, concat!(crate::brand_name!(), " (this computer only)"));
     params.distinguished_name = dn;
     params.is_ca = IsCa::Ca(BasicConstraints::Constrained(0));
     params.name_constraints = Some(NameConstraints {

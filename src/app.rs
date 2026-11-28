@@ -26,7 +26,7 @@ impl Controller {
     pub fn with(config: Arc<ConfigStore>, ca: Arc<CertAuthority>) -> Result<Arc<Controller>, String> {
         let rt = tokio::runtime::Builder::new_multi_thread()
             .worker_threads(2)
-            .thread_name("interceptium-proxy")
+            .thread_name(concat!(crate::brand_lower!(), "-proxy"))
             .enable_all()
             .build()
             .map_err(|e| e.to_string())?;

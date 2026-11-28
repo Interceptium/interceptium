@@ -50,11 +50,11 @@ Get it from the [Releases](../../releases) page:
 
 | File | What it is |
 |---|---|
-| `Interceptium-Setup-1.0.1.exe` | Windows: the app, which installs itself |
-| `Interceptium-1.0.1-source-windows.zip` | Source with the Windows build script (`scripts\build-windows.bat`) |
-| `Interceptium-1.0.1-source-linux.zip` | Source with `scripts/build-linux.sh` |
-| `Interceptium-1.0.1-source-macos.zip` | Source with `scripts/build-macos.sh` |
-| `Interceptium-Setup-1.0.1-source.zip` | Source with the setup build script (`scripts\build-setup.bat`); the setup is in `src/setup/` |
+| `Interceptium-Setup-1.0.2.exe` | Windows: the app, which installs itself |
+| `Interceptium-1.0.2-source-windows.zip` | Source with the Windows build script (`scripts\build-windows.bat`) |
+| `Interceptium-1.0.2-source-linux.zip` | Source with `scripts/build-linux.sh` |
+| `Interceptium-1.0.2-source-macos.zip` | Source with `scripts/build-macos.sh` |
+| `Interceptium-Setup-1.0.2-source.zip` | Source with the setup build script (`scripts\build-setup.bat`); the setup is in `src/setup/` |
 | `SHA256SUMS.txt` | Checksums of the files above |
 
 Every file is built by GitHub Actions from this repository (`.github/workflows/release.yml`). Before a release is
@@ -75,7 +75,7 @@ program: nothing is unpacked to a temporary folder and no other program is start
 Setup options (also for scripted installs):
 
 ```
-Interceptium-Setup-1.0.1.exe --install --quiet [--dir FOLDER] [--no-desktop] [--no-start-menu] [--launch] [--log FILE]
+Interceptium-Setup-1.0.2.exe --install --quiet [--dir FOLDER] [--no-desktop] [--no-start-menu] [--launch] [--log FILE]
 Interceptium.exe --repair | --reinstall | --uninstall [--remove-data] [--quiet] [--log FILE]
 ```
 
@@ -123,6 +123,7 @@ next to **Configs**, by dragging `.json` files onto the window, or by putting th
 | `replace_ids` | Asset IDs, or asset type names (`Image`, `Audio`, `Mesh`, `Animation`, …) |
 | `mode` | `id` replace with `with_id` · `remove` · `local` serve `local_path` |
 | `local_path` | A normal path, or `/Folder/file` relative to the configs folder (portable packs) |
+| `.obj` files | A `local` rule may point at an `.obj` model; it is converted to a Roblox mesh when served |
 | groups | `{"type": "group", "children": [...]}` show as sections |
 
 Which configs run is stored as `enabled_configs` in `settings.json`. Unknown keys in config files are kept when Interceptium saves.
@@ -148,6 +149,12 @@ For each Roblox Player install it finds, Interceptium:
 
 Settings > Roblox > **Remove** (or `Interceptium --remove-from-roblox`) undoes the first two changes.
 
+## Hidoceptium edition
+
+The same code also builds **Hidoceptium**, a Turkish edition with a sea-and-fruit theme, its own logo and a step-by-step
+guide (`cargo build --release --features hido`). It installs separately from Interceptium and has its own releases
+(`hidoceptium-v…`).
+
 ## Command line
 
 ```
@@ -170,7 +177,7 @@ Install Rust from [rustup.rs](https://rustup.rs) (on Windows, also the Visual St
 ```
 cargo run --release            # run it
 cargo test                     # unit, setup and end-to-end proxy tests
-scripts\build-windows.bat      # Windows: dist\Interceptium-Setup-1.0.1.exe
+scripts\build-windows.bat      # Windows: dist\Interceptium-Setup-1.0.2.exe
 scripts/build-linux.sh         # Linux:   dist/interceptium
 scripts/build-macos.sh         # macOS:   dist/Interceptium
 ```

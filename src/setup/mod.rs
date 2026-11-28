@@ -95,7 +95,7 @@ pub fn wants_setup(args: &SetupArgs) -> bool {
 
 /// Start the installed copy with a maintenance option (used by the app's settings).
 pub fn start_maintenance(action: Action) -> Result<(), String> {
-    let dir = install_location().ok_or("Interceptium is not installed with its setup.")?;
+    let dir = install_location().ok_or(concat!(crate::brand_name!(), " is not installed with its setup."))?;
     let exe = dir.join(APP_EXE);
     let flag = match action {
         Action::Repair => "--repair",
@@ -183,7 +183,7 @@ pub fn run_quiet(args: &SetupArgs) -> i32 {
         Action::Reinstall => installer.reinstall(&progress).map(|_| ()),
         Action::Uninstall => match installer.installed() {
             Some(m) => installer.uninstall(std::path::Path::new(&m.directory), args.remove_data, &progress),
-            None => Err("Interceptium is not installed.".into()),
+            None => Err(concat!(crate::brand_name!(), " is not installed.").into()),
         },
     };
     match result {
@@ -219,7 +219,7 @@ pub mod demo {
 
     impl DemoOps {
         pub fn new() -> DemoOps {
-            let root = std::env::temp_dir().join("interceptium-setup-demo");
+            let root = std::env::temp_dir().join(concat!(crate::brand_lower!(), "-setup-demo"));
             let _ = std::fs::create_dir_all(&root);
             DemoOps { root, location: Mutex::new(None) }
         }
@@ -253,7 +253,7 @@ pub mod demo {
             *self.location.lock().unwrap() = None;
         }
         fn user_data_dir(&self) -> PathBuf {
-            self.root.join("data").join("Interceptium")
+            self.root.join("data").join(concat!(crate::brand_name!()))
         }
         fn temp_dir(&self) -> PathBuf {
             self.root.join("tmp")

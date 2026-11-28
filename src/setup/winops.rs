@@ -22,7 +22,7 @@ impl Ops for WindowsOps {
         winsys::desktop_dir()
     }
     fn create_shortcut(&self, link: &Path, target: &Path) -> Result<(), String> {
-        winsys::create_shortcut(link, target, "Interceptium")
+        winsys::create_shortcut(link, target, concat!(crate::brand_name!()))
     }
     fn write_uninstall_entry(&self, values: Vec<(&'static str, EntryValue)>) -> Result<(), String> {
         let converted: Vec<(&str, RegValue)> = values
@@ -38,7 +38,7 @@ impl Ops for WindowsOps {
         winsys::delete_uninstall_entry();
     }
     fn user_data_dir(&self) -> PathBuf {
-        crate::paths::local_appdata().join("Interceptium")
+        crate::paths::local_appdata().join(concat!(crate::brand_name!()))
     }
     fn temp_dir(&self) -> PathBuf {
         std::env::temp_dir()

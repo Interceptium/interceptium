@@ -214,7 +214,7 @@ async fn handle(s: Shared, stream: TcpStream) {
             handle_plain_http(&s, head, client).await
         } else {
             // Not a proxy request (for example a web page probing localhost): refuse.
-            client.write_all(&http1::simple_response(400, "Bad Request", b"Interceptium is a proxy.\n", "text/plain")).await?;
+            client.write_all(&http1::simple_response(400, "Bad Request", concat!(crate::brand_name!(), " is a proxy.\n").as_bytes(), "text/plain")).await?;
             client.shutdown().await
         }
     }
@@ -331,8 +331,10 @@ pub async fn fetch_cdn(s: &Shared, url: &str) -> Result<Vec<u8>, String> {
             let (r, mut w) = tokio::io::split(tls);
             let mut r = BufReader::new(r);
             let req = format!(
-                "GET {path} HTTP/1.1\r\nHost: {authority}\r\nUser-Agent: Interceptium/{}\r\nAccept: */*\r\nAccept-Encoding: gzip\r\nConnection: close\r\n\r\n",
-                crate::VERSION
+                concat!("GET {path} HTTP/1.1\r\nHost: {authority}\r\nUser-Agent: ", crate::brand_name!(), "/{}\r\nAccept: */*\r\nAccept-Encoding: gzip\r\nConnection: close\r\n\r\n"),
+                crate::VERSION,
+                path = path,
+                authority = authority
             );
             w.write_all(req.as_bytes()).await.map_err(|e| e.to_string())?;
             w.flush().await.map_err(|e| e.to_string())?;
@@ -383,10 +385,26 @@ async fn send_source<W: AsyncWrite + Unpin>(s: &Shared, w: &mut W, source: &Sour
 
 async fn send_local<W: AsyncWrite + Unpin>(w: &mut W, path: &str) -> io::Result<()> {
     let data = tokio::fs::metadata(path).await.ok().filter(|m| m.is_file()).map(|_| ());
-    let bytes = match data {
+    let mut bytes = match data {
         Some(()) => tokio::fs::read(path).await.ok(),
         None => None,
     };
+    if crate::mesh::is_obj(path) {
+        // Roblox can't read .obj: convert it to a Roblox mesh first
+        if let Some(raw) = bytes.take() {
+            let name = crate::router::file_name(path);
+            let converted = tokio::task::spawn_blocking(move || crate::mesh::obj_to_roblox_mesh(&String::from_utf8_lossy(&raw))).await;
+            match converted {
+                Ok(Ok(mesh)) => bytes = Some(mesh),
+                Ok(Err(e)) => {
+                    crate::log!("File", "{name} can't be converted to a Roblox mesh: {e}");
+                    w.write_all(&http1::simple_response(404, "Not Found", b"mesh conversion failed\n", "text/plain")).await?;
+                    return w.flush().await;
+                }
+                Err(_) => return Err(io::Error::other("mesh conversion stopped")),
+            }
+        }
+    }
     match bytes {
         Some(b) => w.write_all(&http1::simple_response(200, "OK", &b, "application/octet-stream")).await?,
         None => {
@@ -428,7 +446,7 @@ async fn mitm_loop<S: AsyncRead + AsyncWrite + Unpin>(s: &Shared, host: &str, cl
         if host == ASSET_HOST {
             match AssetRouter::rewrite_single(&path, &rules) {
                 Single::Remove => {
-                    cw.write_all(&http1::simple_response(404, "Not Found", b"removed by Interceptium\n", "text/plain")).await?;
+                    cw.write_all(&http1::simple_response(404, "Not Found", concat!("removed by ", crate::brand_name!(), "\n").as_bytes(), "text/plain")).await?;
                     cw.flush().await?;
                     continue;
                 }

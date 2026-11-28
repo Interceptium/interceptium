@@ -26,7 +26,7 @@ use windows::Win32::System::Wmi::{
 };
 use windows::Win32::UI::Shell::{IShellLinkW, SHGetKnownFolderPath, ShellLink, FOLDERID_Desktop, FOLDERID_Programs, KF_FLAG_DEFAULT};
 
-pub const UNINSTALL_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Uninstall\Interceptium";
+pub const UNINSTALL_KEY: &str = concat!("Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\", crate::brand_name!());
 
 fn wide(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(std::iter::once(0)).collect()

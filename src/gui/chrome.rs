@@ -34,7 +34,7 @@ fn window_button(ui: &mut Ui, id: &str, icon: Icon, danger: bool, tip: &str) -> 
     ui.painter().circle_filled(rect.center(), size / 2.0 - press, alpha(fill, hover * if danger { 0.95 } else { 1.0 }));
     let fg = if danger { mix(t::MUTED(), Color32::WHITE, hover) } else { mix(t::MUTED(), t::TEXT(), hover) };
     icons::draw(ui.painter(), icon, rect.center(), 15.0, fg);
-    resp.on_hover_text(tip).clicked()
+    resp.on_hover_text(crate::i18n::t(tip)).clicked()
 }
 
 /// Minimize, maximize/restore and close, right to left. Use inside a right-to-left layout.

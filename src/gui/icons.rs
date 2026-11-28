@@ -27,6 +27,7 @@ pub enum Icon {
     Shield,
     File,
     Minimize,
+    Book,
     Maximize,
     Restore,
     Warning,
@@ -134,6 +135,10 @@ pub fn draw(p: &Painter, icon: Icon, c: Pos2, s: f32, color: Color32) {
             let shape = CubicBezierShape::from_points_stroke([at(0.0, 0.85), at(0.75, 0.45), at(0.7, -0.2), at(0.7, -0.55)], false, Color32::TRANSPARENT, st);
             p.add(shape);
             polyline(p, vec![at(-0.7, -0.55), at(0.0, -0.85), at(0.7, -0.55)], st);
+        }
+        Icon::Book => {
+            polyline(p, vec![at(0.0, -0.55), at(-0.35, -0.72), at(-0.8, -0.72), at(-0.8, 0.62), at(-0.35, 0.62), at(0.0, 0.78), at(0.35, 0.62), at(0.8, 0.62), at(0.8, -0.72), at(0.35, -0.72), at(0.0, -0.55)], st);
+            p.line_segment([at(0.0, -0.55), at(0.0, 0.78)], st);
         }
         Icon::Minimize => {
             p.line_segment([at(-0.55, 0.0), at(0.55, 0.0)], st);

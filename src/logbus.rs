@@ -18,6 +18,7 @@ pub fn bus() -> &'static LogBus {
 }
 
 pub fn emit(topic: &str, message: &str) {
+    let (topic, message) = (crate::i18n::t(topic), crate::i18n::t(message));
     let line = format!("{} [{topic}] {message}", chrono::Local::now().format("%H:%M:%S"));
     let b = bus();
     {

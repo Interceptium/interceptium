@@ -173,6 +173,8 @@ fn proxy_end_to_end() {
     let store = Arc::new(ConfigStore::open(root.clone()));
     let local = root.join("sky.png");
     std::fs::write(&local, b"LOCAL BYTES").unwrap();
+    let obj = root.join("sword.obj");
+    std::fs::write(&obj, "v 0 0 0\nv 1 0 0\nv 0 1 0\nf 1 2 3\n").unwrap();
     store
         .save_config(
             "Default",
@@ -180,7 +182,8 @@ fn proxy_end_to_end() {
                 {"name": "r", "replace_ids": ["1001"], "mode": "id", "with_id": 2002},
                 {"name": "x", "replace_ids": ["3003"], "mode": "remove"},
                 {"name": "f", "replace_ids": ["4004"], "mode": "local", "local_path": local.to_string_lossy()},
-                {"name": "c", "replace_ids": ["6006"], "mode": "cdn", "cdn_url": "https://cdn.example.com/pack/sky.png"}
+                {"name": "c", "replace_ids": ["6006"], "mode": "cdn", "cdn_url": "https://cdn.example.com/pack/sky.png"},
+                {"name": "m", "replace_ids": ["7007"], "mode": "local", "local_path": obj.to_string_lossy()}
             ]}),
         )
         .unwrap();
@@ -225,6 +228,11 @@ fn proxy_end_to_end() {
         assert_eq!((s, b.as_slice()), (200, &b"upstream /v1/asset/?id=2002"[..]));
         let (s, _) = request(&mut c, "GET", "/v1/asset/?id=3003", b"").await;
         assert_eq!(s, 404);
+        // an .obj file reaches Roblox as a Roblox mesh
+        let (s, b) = request(&mut c, "GET", "/v1/asset/?id=7007", b"").await;
+        assert_eq!(s, 200);
+        assert!(b.starts_with(b"version 2.00\n"));
+        assert_eq!(b.len(), 13 + 12 + 3 * 36 + 12);
 
         // CDN download of the routed asset is answered from the local file
         let mut cdn = connect_through(handle.port, "fts.rbxcdn.com", &pem).await;

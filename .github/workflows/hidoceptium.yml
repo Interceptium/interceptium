@@ -1,0 +1,210 @@
+name: Hidoceptium
+
+# Builds the Hidoceptium edition (Turkish, its own name, install and art) and
+# publishes it as its own release, hidoceptium-v<version>. Run it from
+# Actions > Hidoceptium > Run workflow.
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Hidoceptium version (must match brand::VERSION)"
+        required: false
+        default: "1.0.0"
+      build_only:
+        description: "Only build, sign and test; don't touch the release"
+        type: boolean
+        required: false
+        default: false
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: never
+
+jobs:
+  hido-setup:
+    runs-on: windows-latest
+    env:
+      # Your own code-signing certificate (see SIGNING.md). Empty = build unsigned.
+      HAS_PFX: ${{ secrets.SIGNING_PFX_BASE64 != '' }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Rust toolchain
+        run: rustup update stable --no-self-update && rustup default stable
+      - name: Build
+        shell: pwsh
+        run: |
+          cargo build --release --locked --features hido
+          $version = '${{ inputs.version }}' 
+          New-Item -ItemType Directory -Force dist | Out-Null
+          Copy-Item target\release\interceptium.exe "dist\Hidoceptium-Setup-$version.exe"
+          Get-Item dist\*.exe | Format-Table Name, Length
+
+      # Code signing through SignPath Foundation (see SIGNING.md). Skipped until the
+      # SIGNPATH_* variables and the SIGNPATH_API_TOKEN secret are set in the repository.
+      - name: Upload the unsigned exe for signing
+        id: unsigned
+        if: vars.SIGNPATH_ORGANIZATION_ID != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: hido-unsigned
+          path: dist/Hidoceptium-Setup-*.exe
+          if-no-files-found: error
+      - name: Sign with SignPath (waits for approval)
+        if: vars.SIGNPATH_ORGANIZATION_ID != ''
+        uses: signpath/github-action-submit-signing-request@v1
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG }}
+          signing-policy-slug: ${{ vars.SIGNPATH_POLICY_SLUG }}
+          github-artifact-id: ${{ steps.unsigned.outputs.artifact-id }}
+          wait-for-completion: true
+          wait-for-completion-timeout-in-seconds: 3600
+          output-artifact-directory: signed
+      - name: Use the signed exe
+        if: vars.SIGNPATH_ORGANIZATION_ID != ''
+        shell: pwsh
+        run: |
+          $signed = Get-ChildItem signed -Recurse -Filter 'Hidoceptium-Setup-*.exe' | Select-Object -First 1
+          if (-not $signed) { throw 'SignPath returned no exe' }
+          $sig = Get-AuthenticodeSignature $signed.FullName
+          Write-Host "signature: $($sig.Status) by $($sig.SignerCertificate.Subject)"
+          if ($sig.Status -ne 'Valid') { throw "signature is $($sig.Status)" }
+          Copy-Item $signed.FullName dist\ -Force
+
+      - name: Sign with your own certificate
+        if: env.HAS_PFX == 'true' && vars.SIGNPATH_ORGANIZATION_ID == ''
+        shell: pwsh
+        env:
+          PFX_BASE64: ${{ secrets.SIGNING_PFX_BASE64 }}
+          PFX_PASSWORD: ${{ secrets.SIGNING_PFX_PASSWORD }}
+        run: |
+          $pfx = Join-Path $env:RUNNER_TEMP 'sign.pfx'
+          [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:PFX_BASE64))
+          try {
+            $signtool = (Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin\*\x64\signtool.exe" | Sort-Object FullName | Select-Object -Last 1).FullName
+            if (-not $signtool) { throw 'signtool not found' }
+            foreach ($f in Get-ChildItem dist\*.exe) {
+              & $signtool sign /fd SHA256 /f $pfx /p $env:PFX_PASSWORD /tr http://timestamp.digicert.com /td SHA256 /d Hidoceptium $f.FullName
+              if ($LASTEXITCODE -ne 0) { throw "signing $($f.Name) failed" }
+              $sig = Get-AuthenticodeSignature $f.FullName
+              if (-not $sig.SignerCertificate) { throw "no signature on $($f.Name)" }
+              # A self-signed certificate isn't trusted on this build machine, so the status is not 'Valid' here.
+              Write-Host "signed $($f.Name) by $($sig.SignerCertificate.Subject), thumbprint $($sig.SignerCertificate.Thumbprint)"
+            }
+          } finally {
+            Remove-Item $pfx -Force -ErrorAction SilentlyContinue
+          }
+
+      - name: Scan with Microsoft Defender (fails on any detection)
+        shell: pwsh
+        timeout-minutes: 15
+        run: |
+          $mp = Join-Path $env:ProgramFiles 'Windows Defender\MpCmdRun.exe'
+          & $mp -SignatureUpdate | Out-Host
+          $found = $false
+          foreach ($f in Get-ChildItem dist\*.exe) {
+            Write-Host "== scanning $($f.Name)"
+            $out = & $mp -Scan -ScanType 3 -File $f.FullName -DisableRemediation 2>&1 | Out-String
+            Write-Host $out
+            if ($LASTEXITCODE -eq 2 -or $out -match 'found \d+ threats' -and $out -notmatch 'found no threats') { $found = $true }
+          }
+          if ($found) { throw 'Microsoft Defender flagged a build' }
+
+      - name: Install, open, repair and uninstall (the way Windows Settings does)
+        shell: pwsh
+        timeout-minutes: 10
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $log = Join-Path $env:RUNNER_TEMP 'setup.log'
+          $env:INTERCEPTIUM_HOME = Join-Path $env:RUNNER_TEMP 'home'
+          function Show-Log { if (Test-Path $log) { Get-Content $log | ForEach-Object { Write-Host "  setup> $_" } } }
+          function Run-Exe([string]$exe, [string[]]$arguments, [int]$seconds = 120) {
+            $p = Start-Process -FilePath $exe -ArgumentList $arguments -PassThru
+            if (-not $p.WaitForExit($seconds * 1000)) { Show-Log; Stop-Process -Id $p.Id -Force; throw "$exe timed out" }
+            return $p.ExitCode
+          }
+          $setup = (Get-ChildItem dist\Hidoceptium-Setup-*.exe | Select-Object -First 1).FullName
+          $dir = Join-Path $env:RUNNER_TEMP 'Hidoceptium'
+          $key = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Hidoceptium'
+          $lnk = Join-Path ([Environment]::GetFolderPath('Programs')) 'Hidoceptium.lnk'
+
+          Write-Host '== version'
+          if ((Run-Exe $setup @('--version')) -ne 0) { throw 'version failed' }
+
+          Write-Host '== install'
+          $code = Run-Exe $setup @('--install', '--quiet', '--dir', "`"$dir`"", '--log', "`"$log`"")
+          Show-Log
+          if ($code -ne 0) { throw "install exited with $code" }
+          foreach ($f in 'Hidoceptium.exe', 'install.json') {
+            if (-not (Test-Path (Join-Path $dir $f))) { throw "missing $f" }
+          }
+          $entry = Get-ItemProperty $key
+          if ($entry.InstallLocation -ne $dir) { throw "wrong InstallLocation: $($entry.InstallLocation)" }
+          if ($entry.DisplayName -ne 'Hidoceptium') { throw 'wrong DisplayName' }
+          if (-not (Test-Path $lnk)) { throw 'Start menu shortcut missing' }
+
+          Write-Host '== the installed app opens its window and keeps running'
+          $app = Start-Process -FilePath (Join-Path $dir 'Hidoceptium.exe') -PassThru
+          Start-Sleep -Seconds 10
+          if ($app.HasExited) { throw "app exited early with $($app.ExitCode)" }
+          Stop-Process -Id $app.Id -Force
+          Start-Sleep -Seconds 2
+
+          Write-Host '== repair'
+          Remove-Item $lnk
+          Remove-Item $log -ErrorAction SilentlyContinue
+          $code = Run-Exe $setup @('--repair', '--quiet', '--log', "`"$log`"")
+          Show-Log
+          if ($code -ne 0) { throw "repair exited with $code" }
+          if (-not (Test-Path $lnk)) { throw 'repair did not restore the shortcut' }
+
+          Write-Host '== uninstall (QuietUninstallString from the Apps entry)'
+          $entry = Get-ItemProperty $key
+          if ($entry.QuietUninstallString -notmatch '^"([^"]+)"\s*(.*)$') { throw "odd uninstall string: $($entry.QuietUninstallString)" }
+          $exe, $rest = $Matches[1], $Matches[2]
+          Remove-Item $log -ErrorAction SilentlyContinue
+          $code = Run-Exe $exe @(($rest -split ' ') + @('--log', "`"$log`""))
+          Show-Log
+          if ($code -ne 0) { throw "uninstall exited with $code" }
+          if (Test-Path $dir) { Get-ChildItem -Recurse $dir | Out-Host; throw 'install folder still there' }
+          if (Test-Path $key) { throw 'Apps entry still there' }
+          if (Test-Path $lnk) { throw 'shortcut still there' }
+          Write-Host 'Install, repair and uninstall all worked.'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: hido-setup
+          path: dist/Hidoceptium-Setup-*.exe
+          if-no-files-found: error
+
+  release:
+    if: ${{ !inputs.build_only }}
+    needs: [hido-setup]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: hido-setup
+          path: out
+      - name: Checksums
+        working-directory: out
+        run: sha256sum * > SHA256SUMS.txt && cat SHA256SUMS.txt
+      - name: Replace the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: hidoceptium-v${{ inputs.version }}
+        run: |
+          case "$TAG" in hidoceptium-v[0-9]*) ;; *) echo "bad version: $TAG"; exit 1 ;; esac
+          gh release delete "$TAG" --repo "$GITHUB_REPOSITORY" --cleanup-tag --yes || true
+          gh api -X DELETE "repos/$GITHUB_REPOSITORY/git/refs/tags/$TAG" 2>/dev/null || true
+          gh release create "$TAG" out/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --title "Hidoceptium ${{ inputs.version }}" \
+            --notes-file HIDOCEPTIUM_NOTES.md \
+            --latest=false
